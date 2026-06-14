@@ -1,0 +1,48 @@
+{
+    "css.format.spaceAroundSelectorSeparator": true,
+    "css.lint.boxModel": "warning",
+    "css.lint.compatibleVendorPrefixes": "warning",
+    "css.lint.duplicateProperties": "warning",
+    "css.lint.float": "warning",
+    "css.lint.idSelector": "ignore",
+    "css.lint.unknownAtRules": "ignore",
+    "css.lint.unknownProperties": "warning",
+    "css.lint.unknownVendorSpecificProperties": "warning",
+    "editor.bracketPairColorization.enabled": false,
+    "editor.colorDecoratorsLimit": 99999,
+    "files.watcherExclude": {
+        "**/target/**": true,
+        "**/target*/**": true,
+        "**/.git/**": true
+    },
+    "git.autofetch": false,
+    "rust-analyzer.check.command": "clippy",
+    "rust-analyzer.check.extraArgs": [
+        "--target-dir=target/analyzer"
+    ],
+    "rust-analyzer.completion.privateEditable.enable": true,
+    "rust-analyzer.diagnostics.disabled": [
+        "unresolved-proc-macro"
+    ],
+    "rust-analyzer.diagnostics.experimental.enable": false,
+    "rust-analyzer.imports.granularity.enforce": true,
+    "rust-analyzer.procMacro.enable": true,
+    "rust-analyzer.restartServerOnConfigChange": false,
+    "rust-analyzer.rustfmt.overrideCommand": [
+        "rustup",
+        "run",
+        "nightly",
+        "--",
+        "rustfmt",
+        "--"
+    ],
+    "rust-analyzer.server.extraEnv": {
+        "CARGO_TARGET_DIR": "target/analyzer",
+        "DEMO": "false"
+    },
+    "rust-analyzer.showUnlinkedFileNotification": false,
+    "rust-analyzer.cachePriming.enable": false,
+    "tailwindCSS.includeLanguages": {
+        "rust": "html"
+    },
+}
