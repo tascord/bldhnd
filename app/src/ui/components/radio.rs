@@ -1,3 +1,7 @@
+use ratatui::style::Style;
+
+use crate::ui::components::Focusable;
+
 use {
     crate::{
         events::{EventTarget, SubscriptionHandle, SubscriptionPriority},
@@ -16,21 +20,21 @@ use {
         ops::Deref,
         sync::{
             Arc,
-            atomic::{AtomicBool, AtomicU8, Ordering::SeqCst},
+            atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
         },
     },
 };
 
 pub struct Radio {
     options: Vec<String>,
-    selection: Arc<AtomicU8>,
+    selection: Arc<AtomicUsize>,
     focused: Arc<AtomicBool>,
     subs: Option<[SubscriptionHandle<ModelEvent>; 1]>,
-    ev: EventTarget<InputEvent<u8>>,
+    ev: EventTarget<InputEvent<usize>>,
 }
 
 impl Deref for Radio {
-    type Target = EventTarget<InputEvent<u8>>;
+    type Target = EventTarget<InputEvent<usize>>;
 
     fn deref(&self) -> &Self::Target { &self.ev }
 }
@@ -39,7 +43,7 @@ impl Radio {
     pub fn new<D: Display>(options: impl IntoIterator<Item = D>) -> Self {
         let mut this = Self {
             options: options.into_iter().map(|v| v.to_string()).collect(),
-            selection: AtomicU8::new(0).into(),
+            selection: AtomicUsize::new(0).into(),
             focused: AtomicBool::new(false).into(),
             subs: None,
             ev: EventTarget::new(),
@@ -47,7 +51,7 @@ impl Radio {
 
         let sub = model().target.on(SubscriptionPriority::High, {
             let focused = this.focused.clone();
-            let len = this.options.len() as u8;
+            let len = this.options.len();
             let selected = this.selection.clone();
             let evt = this.ev.clone();
 
@@ -69,15 +73,15 @@ impl Radio {
                         KeyCode::Tab | KeyCode::Esc => {
                             evt.emit(InputEvent::Blur);
                             focused.store(false, SeqCst);
+                            ev.cancel();
+                            return;
                         }
 
-                        KeyCode::Enter => {
-                            evt.emit(InputEvent::Submit(selected.load(SeqCst)));
-                        }
 
                         _ => return,
                     }
 
+                    evt.emit(InputEvent::Submit(selected.load(SeqCst)));
                     ev.cancel();
                 }
             }
@@ -87,11 +91,20 @@ impl Radio {
         this
     }
 
-    pub fn focus(&self) {
+}
+
+impl Focusable for Radio {
+    fn focus(&self) {
         self.focused.store(true, SeqCst);
         self.ev.emit(InputEvent::Focus);
     }
+
+    fn blur(&self) {
+        self.focused.store(false, SeqCst);
+        self.ev.emit(InputEvent::Blur);
+    }
 }
+
 
 impl WidgetRef for Radio {
     fn render_ref(&self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer) {
@@ -101,14 +114,17 @@ impl WidgetRef for Radio {
             .iter()
             .enumerate()
             .map(|(i, o)| {
-                Line::from(format!(
+                Line::styled(format!(
                     "{} {}",
-                    match s == i as u8 {
+                    match s == i as usize {
                         true => '●',
                         false => '○',
                     },
                     o
-                ))
+                ), match self.focused.load(SeqCst) {
+                    true => Style::new().white(),
+                    false => Style::new().gray(),
+                })
             })
             .collect::<Vec<_>>();
 

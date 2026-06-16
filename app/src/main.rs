@@ -1,3 +1,4 @@
 use bldhnd::ui::views::Model;
 
-fn main() -> anyhow::Result<()> { ratatui::run(Model::run) }
+#[tokio::main]
+async fn main() -> anyhow::Result<()> { ratatui::run(Model::run) }

@@ -1,9 +1,15 @@
+use std::sync::{Arc, RwLock};
+
+use to_and_fro::ToAndFro;
+use tokio::{spawn, task::spawn_local};
+
+use crate::{data::{KnowledgeBase, mb, tm, tv}, events::{SubscriptionHandle, SubscriptionPriority}, ui::{components::{Focusable, InputEvent}, views::results::ResultsView}};
+
 use {
     crate::ui::{
         components::{input::Input, radio::Radio},
-        views::{hcenter, home::BANNER_FONT, hstack, vcenter, vstack},
+        views::{hcenter, home::BANNER_FONT, vstack},
     },
-    crossterm::terminal,
     ratatui::{
         layout::Constraint,
         prelude::*,
@@ -11,10 +17,23 @@ use {
     },
 };
 
+#[derive(ToAndFro)]
+pub enum SearchType {
+    Music,
+    Movie,
+    Series
+}
+
 pub struct SearchView {
     banner: Vec<String>,
-    input: Input,
-    radio: Radio,
+    input: Arc<Input>,
+    radio: Arc<Radio>,
+    search_ty: Arc<RwLock<SearchType>>,
+
+    results: Arc<RwLock<Option<ResultsView>>>,
+
+    _radio: Option<SubscriptionHandle<InputEvent<usize>>>,
+    _input: Option<SubscriptionHandle<InputEvent<String>>>
 }
 
 #[allow(clippy::new_without_default)]
@@ -23,11 +42,61 @@ impl SearchView {
         let flet = figlet_rs::FIGlet::from_content(BANNER_FONT).unwrap();
         let text = flet.convert("search").unwrap().to_string();
 
-        let this = Self {
+        let mut this = Self {
             banner: text.lines().map(|l| l.to_string()).collect::<Vec<_>>(),
-            input: Input::new("", ""),
-            radio: Radio::new(["Music", "Movie", "Series"]),
+            search_ty: Arc::new(RwLock::new(SearchType::Music)),
+
+            input: Input::new("", "").into(),
+            radio: Radio::new(SearchType::list()).into(),
+
+            results: Default::default(),
+
+            _radio: None,
+            _input: None,
         };
+
+        this._radio = Some(this.radio.on(SubscriptionPriority::Low, {
+            let st = this.search_ty.clone();
+            move |ev| {
+                if let InputEvent::Submit(ev) = (**ev).clone() {*st.write().unwrap() =SearchType::list()[ev]}
+            }
+        }));
+
+        this._input = Some(this.input.on(SubscriptionPriority::High, {
+            let rs = this.results.clone();
+            let st = this.search_ty.clone();
+            let inp = this.input.clone();
+            let rad = this.radio.clone();
+
+            move |ev| {
+                let rs = rs.clone();
+                let inp = inp.clone();
+                let rad = rad.clone();
+
+                if let InputEvent::Submit(q) = (**ev).clone() {
+                    let kb = match *st.read().unwrap() {
+                        SearchType::Music => mb() as Arc<dyn KnowledgeBase>,
+                        SearchType::Movie => tm() as Arc<dyn KnowledgeBase>,
+                        SearchType::Series => tv() as Arc<dyn KnowledgeBase>,
+                    };
+
+                    inp.blur();
+                    rad.blur();
+
+                    spawn(async move {
+                        let r = kb.search(&q).await.unwrap();
+                        *rs.write().unwrap() = Some(ResultsView::new(r, {
+                            let rs = rs.clone();
+                            move || {
+                                *rs.write().unwrap() = None;
+                                inp.focus();
+                                rad.focus();
+                            }
+                        }));
+                    });
+                }
+            }
+        }));
 
         this.input.focus();
         this.radio.focus();
@@ -41,6 +110,12 @@ impl WidgetRef for SearchView {
     where
         Self: Sized,
     {
+
+        if let Some(res) = self.results.read().unwrap().as_ref() {
+            res.render_ref(area, buf);
+            return;
+        }
+
         let text = Text::from_iter(self.banner.iter().map(|l| Line::from(Span::raw(l.clone()))));
 
         let w = text.width();

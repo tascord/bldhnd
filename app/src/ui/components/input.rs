@@ -1,17 +1,17 @@
+use crate::ui::components::{Focusable, scroll::ScrollItem};
+
 use {
     crate::{
-        events::{EventTarget, Subscription, SubscriptionHandle, SubscriptionPriority},
+        events::{EventTarget, SubscriptionHandle, SubscriptionPriority},
         ui::{
             components::InputEvent,
             views::{ModelEvent, model},
         },
     },
-    crossterm::{
-        cursor,
-        event::{KeyCode, KeyModifiers},
-    },
+    crossterm::
+        event::{KeyCode, KeyModifiers}
+    ,
     ratatui::{
-        layout::Margin,
         style::{Color::White, Style},
         text::{Line, Span},
         widgets::{Block, BorderType, Borders, Paragraph, Widget, WidgetRef},
@@ -19,7 +19,6 @@ use {
     std::{
         fmt::Display,
         ops::Deref,
-        pin::Pin,
         sync::{
             Arc, RwLock,
             atomic::{AtomicBool, Ordering::SeqCst},
@@ -60,6 +59,16 @@ pub struct Input {
     ev: EventTarget<InputEvent<String>>,
 }
 
+impl ScrollItem for Input {
+    fn height(&self) -> u16 {
+        3
+    }
+
+    fn width(&self) -> u16 {
+        0
+    }
+}
+
 impl Deref for Input {
     type Target = EventTarget<InputEvent<String>>;
 
@@ -88,6 +97,7 @@ impl Input {
                 if let ModelEvent::KeyPress(key_event) = **ev
                     && focused.load(SeqCst)
                 {
+                    let prev_foc = focused.load(SeqCst);
                     let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
                     let shft = key_event.modifiers.contains(KeyModifiers::SHIFT);
 
@@ -220,11 +230,6 @@ impl Input {
         this
     }
 
-    pub fn focus(&self) {
-        self.focused.store(true, SeqCst);
-        self.ev.emit(InputEvent::Focus);
-    }
-
     fn scroll_window(total: usize, avail: usize, sel_lo: usize, sel_hi: usize, caret: usize) -> (usize, usize) {
         if avail == 0 || total <= avail {
             return (0, total);
@@ -236,6 +241,18 @@ impl Input {
         let start = center.saturating_sub(avail / 2).min(total - avail); // never let the window run past the end
 
         (start, start + avail)
+    }
+}
+
+impl Focusable for Input {
+    fn focus(&self) {
+        self.focused.store(true, SeqCst);
+        self.ev.emit(InputEvent::Focus);
+    }
+
+    fn blur(&self) {
+        self.focused.store(false, SeqCst);
+        self.ev.emit(InputEvent::Blur);
     }
 }
 
@@ -280,7 +297,10 @@ impl WidgetRef for Input {
         };
 
         Paragraph::new(line)
-            .block(Block::new().border_type(BorderType::Rounded).borders(Borders::ALL).title(self.label.as_str()))
+            .block(Block::new().border_type(BorderType::Rounded).borders(Borders::ALL).border_style(match self.focused.load(SeqCst) {
+                true => Style::new().white(),
+                false => Style::new().gray(),
+            }).title(self.label.as_str()))
             .render(area, buf);
     }
 }

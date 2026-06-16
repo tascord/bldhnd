@@ -5,11 +5,13 @@
 //!   - [`SearchHit`]  — a single result from a search
 //!   - [`error`]      — error types
 
+pub mod client;
 pub mod error;
+pub mod peer;
 pub mod proto;
 pub mod server;
-pub mod peer;
-pub mod client;
 
-pub use client::{SlskClient, SearchHit, Config};
-pub use error::SlskError;
+pub use {
+    client::{Config, SearchHit, SlskClient},
+    error::SlskError,
+};

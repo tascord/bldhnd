@@ -1,8 +1,7 @@
 use {
-    futures_signals::{
-        signal::Mutable,
-        signal_map::{MutableBTreeMap, MutableBTreeMapLockMut},
-    },
+    futures_signals::
+        signal_map::MutableBTreeMap
+    ,
     std::{
         fmt::Debug,
         sync::{

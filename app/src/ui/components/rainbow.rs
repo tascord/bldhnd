@@ -6,16 +6,9 @@ use {
     std::time::Instant,
 };
 
-/// Hue shift (degrees) per character, applied diagonally across rows and
-/// columns. Smaller = smoother/slower spatial gradient.
 const HUE_STEP: f64 = 1.5;
-
-/// Hue shift (degrees) per second, drives the animation over time.
 const ANIM_SPEED: f64 = 40.0;
 
-/// Applies an animated, diagonal rainbow gradient to a `Text`. Create one
-/// instance and call `apply` each frame — the gradient shifts over time
-/// based on elapsed time since the `RainbowGradient` was created.
 pub struct Rainbow {
     start: Instant,
 }

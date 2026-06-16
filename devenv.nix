@@ -2,7 +2,7 @@
 
 { 
 
-  packages = [ pkgs.git ];
+  packages = [ pkgs.git pkgs.rustup ];
 
   languages.rust = {
     enable = true;

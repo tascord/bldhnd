@@ -1,6 +1,6 @@
 use {
     crate::ui::{
-        components::{rainbow, rainbow::Rainbow},
+        components::rainbow::Rainbow,
         views::vstack,
     },
     rand::RngExt,

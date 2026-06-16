@@ -1,3 +1,5 @@
+use crate::ui::views::settings::SettingsView;
+
 use {
     crate::{
         events::{EventTarget, SubscriptionPriority},
@@ -11,7 +13,6 @@ use {
         widgets::{Block, BorderType, Borders, Paragraph, WidgetRef},
     },
     std::{
-        rc::Rc,
         sync::{
             Arc, LazyLock, Mutex,
             atomic::{AtomicBool, Ordering::SeqCst},
@@ -23,6 +24,8 @@ use {
 pub mod home;
 pub mod library;
 pub mod search;
+pub mod settings;
+pub mod results;
 
 static MODEL: LazyLock<Arc<Model>> = LazyLock::new(|| Arc::new(Model::new()));
 
@@ -91,6 +94,7 @@ pub enum ModelView {
     Home(HomeView),
     Search(SearchView),
     Library(LibraryView),
+    Settings(SettingsView)
 }
 
 impl Default for ModelView {
@@ -103,11 +107,12 @@ impl ModelView {
             ModelView::Home(v) => v.render_ref(area, buf),
             ModelView::Search(v) => v.render_ref(area, buf),
             ModelView::Library(v) => v.render_ref(area, buf),
+            ModelView::Settings(v) => v.render_ref(area, buf),
         }
     }
 
     pub fn list() -> Vec<(String, usize)> {
-        vec![("Home".to_string(), 1), ("Search".to_string(), 2), ("Library".to_string(), 3)]
+        vec![("Home".to_string(), 1), ("Search".to_string(), 2), ("Library".to_string(), 3), ("Settings".to_string(), 4)]
     }
 
     pub fn key(k: KeyCode) {
@@ -126,6 +131,9 @@ impl ModelView {
             KeyCode::Char('3') if ex != 3 => {
                 *model().view.lock().unwrap() = Some(ModelView::Library(LibraryView::new()));
             }
+            KeyCode::Char('4') if ex != 4 => {
+                *model().view.lock().unwrap() = Some(ModelView::Settings(SettingsView::new()));
+            }
             _ => {}
         }
     }
@@ -135,6 +143,7 @@ impl ModelView {
             ModelView::Home(_) => 1,
             ModelView::Search(_) => 2,
             ModelView::Library(_) => 3,
+            ModelView::Settings(_) => 4,
         }
     }
 }
