@@ -1,24 +1,13 @@
-use crate::events::SubscriptionHandle;
-
 use {
     crate::{
         events::{EventTarget, SubscriptionPriority},
-        ui::{components::input::Input, views::demo::DemoView},
+        ui::views::demo::DemoView,
     },
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
-    ratatui::{
-        DefaultTerminal, Frame,
-        layout::{
-            Constraint,
-            Direction::{Horizontal, Vertical},
-            Layout,
-        },
-        prelude::*,
-        widgets::{Widget, WidgetRef},
-    },
+    ratatui::{DefaultTerminal, Frame, prelude::*, widgets::WidgetRef},
     std::{
         sync::{
-            Arc, LazyLock, RwLock,
+            Arc, LazyLock, Mutex,
             atomic::{AtomicBool, Ordering::SeqCst},
         },
         time::Duration,
@@ -34,8 +23,7 @@ pub fn model() -> Arc<Model> { MODEL.clone() }
 pub struct Model {
     pub exit: AtomicBool,
     pub target: EventTarget<ModelEvent>,
-    pub view: RwLock<ModelView>,
-    _subs: Vec<SubscriptionHandle<ModelEvent>>,
+    pub view: Mutex<Option<ModelView>>,
 }
 
 #[derive(Debug)]
@@ -75,27 +63,32 @@ impl ModelView {
 #[allow(clippy::new_without_default)]
 impl Model {
     pub fn new() -> Self {
-        let mut m = Model {
-            exit: AtomicBool::new(false),
-            target: EventTarget::new(),
-            view: RwLock::new(ModelView::Demo(DemoView::new())),
-            _subs: Vec::new(),
-        };
+        let m = Model { exit: AtomicBool::new(false), target: EventTarget::new(), view: Default::default() };
 
-        let sub = m.target.on(SubscriptionPriority::Low, |v| {
-            if let ModelEvent::KeyPress(key_code) = **v {
-                // quit on 'q' or 'Q'
-                if key_code.code == KeyCode::Char('q') || key_code.code == KeyCode::Char('Q') {
-                    model().exit.store(true, SeqCst);
+        m.target
+            .on(SubscriptionPriority::Low, |v| {
+                if let ModelEvent::KeyPress(key_code) = **v {
+                    // quit on 'q' or 'Q'
+                    if key_code.code == KeyCode::Char('q') || key_code.code == KeyCode::Char('Q') {
+                        model().exit.store(true, SeqCst);
+                    }
                 }
-            }
-        });
+            })
+            .forget();
 
-        m._subs.push(sub);
         m
     }
 
-    pub fn draw(&self, f: &mut Frame) { self.view.read().unwrap().render(f.area(), f.buffer_mut()); }
+    pub fn draw(&self, f: &mut Frame) {
+        let mut lock = self.view.lock().unwrap();
+        if lock.is_none() {
+            *lock = Some(ModelView::Demo(DemoView::new()));
+        }
+
+        if let Some(l) = lock.as_ref() {
+            l.render(f.area(), f.buffer_mut())
+        }
+    }
 
     pub fn run(terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
         loop {

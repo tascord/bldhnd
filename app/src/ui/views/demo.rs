@@ -1,5 +1,3 @@
-use ratatui::widgets::Block;
-
 use {
     crate::ui::components::input::Input,
     ratatui::{
@@ -9,7 +7,7 @@ use {
             Layout,
         },
         prelude::*,
-        widgets::{Widget, WidgetRef},
+        widgets::{Block, Widget, WidgetRef},
     },
 };
 
@@ -18,7 +16,11 @@ pub struct DemoView {
 }
 
 impl DemoView {
-    pub fn new() -> Self { Self { i: Input::new("Demo Input", "") } }
+    pub fn new() -> Self {
+        let this = Self { i: Input::new("Demo Input", "") };
+        this.i.focus();
+        this
+    }
 }
 
 impl WidgetRef for DemoView {
@@ -26,13 +28,12 @@ impl WidgetRef for DemoView {
     where
         Self: Sized,
     {
+        // Block::new().borders(ratatui::widgets::Borders::ALL).bg(Color::LightGreen).render(area, buf);
 
-        Block::new().borders(ratatui::widgets::Borders::ALL).bg(Color::LightGreen).render(area, buf);
+        let y = Layout::new(Vertical, [Constraint::Fill(1), Constraint::Length(3), Constraint::Fill(1)]).split(area);
+        let x = Layout::new(Horizontal, [Constraint::Fill(1), Constraint::Length(16), Constraint::Fill(1)]).split(y[1]);
 
-        // let y = Layout::new(Vertical, [Constraint::Fill(1), Constraint::Length(3), Constraint::Fill(1)]).split(area);
-        // let x = Layout::new(Horizontal, [Constraint::Fill(1), Constraint::Length(16), Constraint::Fill(1)]).split(y[1]);
-
-        // let l = x[1];
-        // self.i.render_ref(l, buf);
+        let l = x[1];
+        self.i.render_ref(l, buf);
     }
 }
