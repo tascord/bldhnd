@@ -1,11 +1,17 @@
 use {
     crate::{
         events::{EventTarget, SubscriptionPriority},
-        ui::views::demo::DemoView,
+        ui::views::{home::HomeView, library::LibraryView, search::SearchView},
     },
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
-    ratatui::{DefaultTerminal, Frame, prelude::*, widgets::WidgetRef},
+    ratatui::{
+        DefaultTerminal, Frame,
+        prelude::*,
+        style::Color::{Black, White},
+        widgets::{Block, BorderType, Borders, Paragraph, WidgetRef},
+    },
     std::{
+        rc::Rc,
         sync::{
             Arc, LazyLock, Mutex,
             atomic::{AtomicBool, Ordering::SeqCst},
@@ -14,11 +20,61 @@ use {
     },
 };
 
-pub mod demo;
+pub mod home;
+pub mod library;
+pub mod search;
 
 static MODEL: LazyLock<Arc<Model>> = LazyLock::new(|| Arc::new(Model::new()));
 
 pub fn model() -> Arc<Model> { MODEL.clone() }
+
+pub fn vstack(c: &[u16], a: Rect) -> Vec<Rect> {
+    let mut cons = Vec::new();
+
+    cons.push(Constraint::Fill(1));
+    for ele in c.iter().zip(std::iter::repeat(Constraint::Length(1))).flat_map(|(a, b)| [Constraint::Length(*a), b]) {
+        cons.push(ele);
+    }
+    cons.push(Constraint::Fill(1));
+
+    let l = Layout::new(Direction::Vertical, cons).split(a);
+    l.iter()
+        .skip(1)
+        .enumerate()
+        .take_while(|(i, _)| i <= &(c.len() + 1))
+        .filter(|(i, _)| i.is_multiple_of(2))
+        .map(|v| v.1)
+        .cloned()
+        .collect::<Vec<_>>()
+}
+
+pub fn hstack(c: &[u16], a: Rect) -> Vec<Rect> {
+    let mut cons = Vec::new();
+
+    cons.push(Constraint::Fill(1));
+    for ele in c.iter().zip(std::iter::repeat(Constraint::Length(1))).flat_map(|(a, b)| [Constraint::Length(*a), b]) {
+        cons.push(ele);
+    }
+    cons.push(Constraint::Fill(1));
+
+    let l = Layout::new(Direction::Horizontal, cons).split(a);
+    l.iter()
+        .skip(1)
+        .enumerate()
+        .take_while(|(i, _)| i <= &(c.len() + 1))
+        .filter(|(i, _)| i.is_multiple_of(2))
+        .map(|v| v.1)
+        .cloned()
+        .collect::<Vec<_>>()
+}
+
+pub fn vcenter(l: u16, a: Rect) -> Rect {
+    Layout::vertical([Constraint::Fill(1), Constraint::Length(l), Constraint::Fill(1)]).split(a)[1]
+}
+
+pub fn hcenter(l: u16, a: Rect) -> Rect {
+    Layout::horizontal([Constraint::Fill(1), Constraint::Length(l), Constraint::Fill(1)]).split(a)[1]
+}
 
 pub struct Model {
     pub exit: AtomicBool,
@@ -32,30 +88,53 @@ pub enum ModelEvent {
 }
 
 pub enum ModelView {
-    Demo(DemoView),
+    Home(HomeView),
+    Search(SearchView),
+    Library(LibraryView),
 }
 
 impl Default for ModelView {
-    fn default() -> Self { ModelView::Demo(DemoView::new()) }
+    fn default() -> Self { ModelView::Home(HomeView::new()) }
 }
 
 impl ModelView {
-    pub fn string(&self) -> String {
-        match self {
-            ModelView::Demo(_) => "demo",
-        }
-        .to_string()
-    }
-
-    pub fn char(&self) -> char {
-        match self {
-            ModelView::Demo(_) => 'd',
-        }
-    }
-
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
         match self {
-            ModelView::Demo(v) => v.render_ref(area, buf),
+            ModelView::Home(v) => v.render_ref(area, buf),
+            ModelView::Search(v) => v.render_ref(area, buf),
+            ModelView::Library(v) => v.render_ref(area, buf),
+        }
+    }
+
+    pub fn list() -> Vec<(String, usize)> {
+        vec![("Home".to_string(), 1), ("Search".to_string(), 2), ("Library".to_string(), 3)]
+    }
+
+    pub fn key(k: KeyCode) {
+        let ex = {
+            let m = model();
+            m.view.lock().unwrap().as_ref().map(|v| v.n()).unwrap_or_default()
+        };
+
+        match k {
+            KeyCode::Char('1') if ex != 1 => {
+                *model().view.lock().unwrap() = Some(ModelView::Home(HomeView::new()));
+            }
+            KeyCode::Char('2') if ex != 2 => {
+                *model().view.lock().unwrap() = Some(ModelView::Search(SearchView::new()));
+            }
+            KeyCode::Char('3') if ex != 3 => {
+                *model().view.lock().unwrap() = Some(ModelView::Library(LibraryView::new()));
+            }
+            _ => {}
+        }
+    }
+
+    pub fn n(&self) -> usize {
+        match self {
+            ModelView::Home(_) => 1,
+            ModelView::Search(_) => 2,
+            ModelView::Library(_) => 3,
         }
     }
 }
@@ -67,11 +146,12 @@ impl Model {
 
         m.target
             .on(SubscriptionPriority::Low, |v| {
-                if let ModelEvent::KeyPress(key_code) = **v {
-                    // quit on 'q' or 'Q'
-                    if key_code.code == KeyCode::Char('q') || key_code.code == KeyCode::Char('Q') {
-                        model().exit.store(true, SeqCst);
+                if let ModelEvent::KeyPress(ev) = **v {
+                    if ev.code == KeyCode::Char('q') || ev.code == KeyCode::Char('Q') {
+                        return model().exit.store(true, SeqCst);
                     }
+
+                    ModelView::key(ev.code);
                 }
             })
             .forget();
@@ -80,13 +160,37 @@ impl Model {
     }
 
     pub fn draw(&self, f: &mut Frame) {
+        Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .render(f.area().inner(Margin::new(1, 1)), f.buffer_mut());
+
+        let sel = self.view.lock().unwrap().as_ref().map(|v| v.n()).unwrap_or_default();
+
+        let mut x = 0;
+        for tab in ModelView::list() {
+            let text = format!("{} ({})", tab.0, tab.1);
+            let text = Line::from_iter([
+                Span::raw("| "),
+                Span::styled(text, match sel == tab.1 {
+                    true => Style::new().bg(White).fg(Black),
+                    false => Style::new(),
+                }),
+                Span::raw(" |"),
+            ]);
+
+            Paragraph::new(text.to_string())
+                .render(Rect { x: x + 3, y: 1, width: text.width() as u16, height: 1 }, f.buffer_mut());
+            x += (text.width() as u16) + 1;
+        }
+
         let mut lock = self.view.lock().unwrap();
         if lock.is_none() {
-            *lock = Some(ModelView::Demo(DemoView::new()));
+            *lock = Some(ModelView::Home(HomeView::new()));
         }
 
         if let Some(l) = lock.as_ref() {
-            l.render(f.area(), f.buffer_mut())
+            l.render(f.area().inner(Margin::new(4, 3)), f.buffer_mut())
         }
     }
 

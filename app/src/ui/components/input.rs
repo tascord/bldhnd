@@ -1,7 +1,10 @@
 use {
     crate::{
-        events::{Subscription, SubscriptionHandle, SubscriptionPriority},
-        ui::views::{ModelEvent, model},
+        events::{EventTarget, Subscription, SubscriptionHandle, SubscriptionPriority},
+        ui::{
+            components::InputEvent,
+            views::{ModelEvent, model},
+        },
     },
     crossterm::{
         cursor,
@@ -15,6 +18,7 @@ use {
     },
     std::{
         fmt::Display,
+        ops::Deref,
         pin::Pin,
         sync::{
             Arc, RwLock,
@@ -53,7 +57,13 @@ pub struct Input {
     label: String,
     ts: Instant,
     subs: Option<[SubscriptionHandle<ModelEvent>; 1]>,
-    on_blur: Arc<RwLock<Box<dyn Fn() + Sync + Send + 'static>>>,
+    ev: EventTarget<InputEvent<String>>,
+}
+
+impl Deref for Input {
+    type Target = EventTarget<InputEvent<String>>;
+
+    fn deref(&self) -> &Self::Target { &self.ev }
 }
 
 impl Input {
@@ -65,14 +75,14 @@ impl Input {
             label: label.to_string(),
             ts: Instant::now(),
             subs: None,
-            on_blur: Arc::new(RwLock::new(Box::new(|| {}))),
+            ev: EventTarget::new(),
         };
 
         let sub = model().target.on(SubscriptionPriority::High, {
             let text = this.text.clone();
             let cursor = this.cursor.clone();
             let focused = this.focused.clone();
-            let on_blur = this.on_blur.clone();
+            let evt = this.ev.clone();
 
             move |ev| {
                 if let ModelEvent::KeyPress(key_event) = **ev
@@ -179,9 +189,14 @@ impl Input {
                                 cur = Cursor::collapse(cur.caret + c.len_utf8());
                             }
                         }
-                        KeyCode::Tab => {
-                            (on_blur.read().unwrap())();
+
+                        KeyCode::Tab | KeyCode::Esc => {
+                            evt.emit(InputEvent::Blur);
                             focused.store(false, SeqCst);
+                        }
+
+                        KeyCode::Enter => {
+                            evt.emit(InputEvent::Submit(txt.to_string()));
                         }
 
                         // Unhandled, skip before we cancel event
@@ -205,11 +220,22 @@ impl Input {
         this
     }
 
-    pub fn focus(&self) { self.focused.store(true, SeqCst); }
+    pub fn focus(&self) {
+        self.focused.store(true, SeqCst);
+        self.ev.emit(InputEvent::Focus);
+    }
 
-    pub fn blur(self, f: impl Fn() + Sync + Send + 'static) -> Self {
-        *self.on_blur.write().unwrap() = Box::new(f);
-        self
+    fn scroll_window(total: usize, avail: usize, sel_lo: usize, sel_hi: usize, caret: usize) -> (usize, usize) {
+        if avail == 0 || total <= avail {
+            return (0, total);
+        }
+
+        let sel_span = sel_hi - sel_lo;
+        let center = if sel_span <= avail { (sel_lo + sel_hi) / 2 } else { caret };
+
+        let start = center.saturating_sub(avail / 2).min(total - avail); // never let the window run past the end
+
+        (start, start + avail)
     }
 }
 
@@ -221,17 +247,33 @@ impl WidgetRef for Input {
         let sel_lo = cur.sel_lo();
         let sel_hi = cur.sel_hi();
 
+        // Rounded border with Borders::ALL eats one column on each side.
+        let avail = area.width.saturating_sub(2) as usize;
+        let total = text.chars().count();
+        let (win_lo, win_hi) = Self::scroll_window(total, avail, sel_lo, sel_hi, cur.caret);
+
+        // char-index -> byte-index, so slicing stays UTF-8 safe.
+        let byte_at = |idx: usize| text.char_indices().nth(idx).map(|(b, _)| b).unwrap_or(text.len());
+
+        let (b_win_lo, b_win_hi) = (byte_at(win_lo), byte_at(win_hi));
+        let (b_sel_lo, b_sel_hi) = (byte_at(sel_lo.clamp(win_lo, win_hi)), byte_at(sel_hi.clamp(win_lo, win_hi)));
+        let rel_caret = byte_at(cur.caret.clamp(win_lo, win_hi)) - b_win_lo;
+
+        let visible = &text[b_win_lo..b_win_hi];
+        let rel_sel_lo = b_sel_lo - b_win_lo;
+        let rel_sel_hi = b_sel_hi - b_win_lo;
+
         let blink = match self.ts.elapsed().as_secs().is_multiple_of(2) && self.focused.load(SeqCst) {
             true => Style::new().on_white(),
             false => Style::new(),
         };
 
-        let before = Span::styled(text.get(0..sel_lo).unwrap_or_default(), Style::new());
-        let selected = Span::styled(text.get(sel_lo..sel_hi).unwrap_or_default(), Style::new().bg(White));
-        let after = Span::styled(text.get(sel_hi..).unwrap_or_default(), Style::new());
+        let before = Span::styled(visible.get(0..rel_sel_lo).unwrap_or_default(), Style::new());
+        let selected = Span::styled(visible.get(rel_sel_lo..rel_sel_hi).unwrap_or_default(), Style::new().bg(White));
+        let after = Span::styled(visible.get(rel_sel_hi..).unwrap_or_default(), Style::new());
         let caret = Span::styled(" ", blink);
 
-        let line = if cur.caret == sel_lo {
+        let line = if rel_caret == rel_sel_lo {
             Line::from_iter([before, caret, selected, after])
         } else {
             Line::from_iter([before, selected, caret, after])
