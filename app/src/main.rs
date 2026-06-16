@@ -1,4 +1,4 @@
-use bldhound::ui::views::{Model, model};
+use bldhnd::ui::views::{Model, model};
 
 
 fn main() -> anyhow::Result<()> {

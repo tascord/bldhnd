@@ -1,25 +1,38 @@
-use std::{sync::{Arc, LazyLock, RwLock}, time::{SystemTime}};
+use ratatui::widgets::Block;
 
-use ratatui::{widgets::{Paragraph, Widget}};
+use {
+    crate::ui::components::input::Input,
+    ratatui::{
+        layout::{
+            Constraint,
+            Direction::{Horizontal, Vertical},
+            Layout,
+        },
+        prelude::*,
+        widgets::{Widget, WidgetRef},
+    },
+};
 
-use crate::ui::views::ModelEvent;
-
-#[derive(Default)]
-pub struct DemoData {
-    last_ev: Option<String>
+pub struct DemoView {
+    i: Input,
 }
 
-static DD: LazyLock<Arc<RwLock<DemoData>>> = LazyLock::new(Default::default);
-
-pub fn set_last_event(s: String) {
-    DD.write().unwrap().last_ev = Some(s);
+impl DemoView {
+    pub fn new() -> Self { Self { i: Input::new("Demo Input", "") } }
 }
 
-pub struct DemoView;
-impl Widget for DemoView {
-    fn render(self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer)
+impl WidgetRef for DemoView {
+    fn render_ref(&self, area: Rect, buf: &mut Buffer)
     where
-        Self: Sized {
-        Paragraph::new(format!("{:?} || {}", DD.read().unwrap().last_ev, SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis())).render(area, buf);
+        Self: Sized,
+    {
+
+        Block::new().borders(ratatui::widgets::Borders::ALL).bg(Color::LightGreen).render(area, buf);
+
+        // let y = Layout::new(Vertical, [Constraint::Fill(1), Constraint::Length(3), Constraint::Fill(1)]).split(area);
+        // let x = Layout::new(Horizontal, [Constraint::Fill(1), Constraint::Length(16), Constraint::Fill(1)]).split(y[1]);
+
+        // let l = x[1];
+        // self.i.render_ref(l, buf);
     }
 }
