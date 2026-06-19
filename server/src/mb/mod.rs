@@ -128,6 +128,7 @@ impl MusicBrainz {
                     match serde_json::from_str::<ty::Root>(&line).map(MinifiedRelease::from) {
                         Ok(it) => {
                             t_data.insert(it.id.clone(), line.to_string())?;
+
                             t_idx.insert(it.title.clone(), {
                                 let mut v = t_idx.get(it.title).ok().flatten().map(|v| v.value()).unwrap_or_default();
                                 v.push(it.id);

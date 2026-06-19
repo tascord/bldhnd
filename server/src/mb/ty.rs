@@ -93,7 +93,7 @@ pub struct Artist {
     #[serde(rename = "type-id")]
     pub type_id: Option<String>,
     #[serde(rename = "type")]
-    pub artist_type: Option<String>, // 'type' is a reserved keyword in Rust
+    pub artist_type: Option<String>,
     pub aliases: Option<Vec<Alias>>,
     pub name: String,
     pub country: Option<serde_json::Value>,
@@ -296,28 +296,20 @@ pub struct Label {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct MinifiedRelease {
-    // Core Album/Release Info
     pub id: String,
     pub title: String,
     pub release_date: Option<String>,
     pub country: Option<String>,
     pub barcode: Option<String>,
     pub asin: Option<String>,
-
-    // Artists & Credits (Flattened string for searching, structured array for Plex metadata)
     pub primary_artist: String,
     pub artist_credits: Vec<MinifiedArtist>,
-
-    // Search & Categorization Indexing
     pub genres: Vec<String>,
     pub tags: Vec<String>,
-
-    // Media & Tracks (Highly minimized tree)
     pub total_discs: usize,
     pub total_tracks: usize,
     pub tracks: Vec<MinifiedTrack>,
 
-    // Plex specific flags
     pub has_front_cover: bool,
 }
 
@@ -333,17 +325,17 @@ pub struct MinifiedArtist {
 #[serde(rename_all = "camelCase")]
 pub struct MinifiedTrack {
     pub id: String,
-    pub position: i64,      // Track number on the disc
-    pub disc_position: i64, // Disc number
+    pub position: i64,
+    pub disc_position: i64,
     pub title: String,
     pub length_ms: Option<i64>,
-    pub artist: String, // Simplified display string for the track artist
+    pub artist: String,
 }
 
 impl From<Root> for MinifiedRelease {
     fn from(root: Root) -> Self {
-        // 1. Build cohesive primary artist names and credits
-        let artist_credits: Vec<MinifiedArtist> = root.artist_credit
+        let artist_credits: Vec<MinifiedArtist> = root
+            .artist_credit
             .iter()
             .map(|ac| MinifiedArtist {
                 id: ac.artist.id.clone(),
@@ -352,7 +344,8 @@ impl From<Root> for MinifiedRelease {
             })
             .collect();
 
-        let primary_artist = root.artist_credit
+        let primary_artist = root
+            .artist_credit
             .iter()
             .map(|ac| {
                 let name = &ac.artist.name;
@@ -362,18 +355,13 @@ impl From<Root> for MinifiedRelease {
             .collect::<Vec<String>>()
             .join("");
 
-        // 2. Extract Genres from both Release level and ReleaseGroup level
         let mut genres = Vec::new();
         for genre in root.release_group.genres {
             genres.push(genre.name);
         }
-        // Fallback for release group tags
-        let mut tags: Vec<String> = root.release_group.tags
-            .iter()
-            .map(|t| t.name.clone())
-            .collect();
 
-        // 3. Process Medias & Tracks down into flat items
+        let tags: Vec<String> = root.release_group.tags.iter().map(|t| t.name.clone()).collect();
+
         let total_discs = root.media.len();
         let mut total_tracks = 0;
         let mut tracks = Vec::new();
@@ -381,7 +369,8 @@ impl From<Root> for MinifiedRelease {
         for medium in root.media {
             total_tracks += medium.tracks.len();
             for track in medium.tracks {
-                let track_artist = track.artist_credit
+                let track_artist = track
+                    .artist_credit
                     .iter()
                     .map(|ac| format!("{}{}", ac.artist.name, ac.joinphrase.as_deref().unwrap_or("")))
                     .collect::<Vec<String>>()
@@ -393,16 +382,14 @@ impl From<Root> for MinifiedRelease {
                     disc_position: medium.position,
                     title: track.title,
                     length_ms: track.length.or(track.recording.length),
-                	artist: if track_artist.is_empty() { primary_artist.clone() } else { track_artist },
+                    artist: if track_artist.is_empty() { primary_artist.clone() } else { track_artist },
                 });
             }
         }
 
-        // 4. Build output struct
         MinifiedRelease {
             id: root.id,
             title: root.title,
-            // Prefer the broad Release Group date, fallback to the specific release date
             release_date: root.date.or(root.release_group.first_release_date),
             country: root.country,
             barcode: root.barcode,

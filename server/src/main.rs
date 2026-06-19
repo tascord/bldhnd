@@ -3,6 +3,7 @@ use {
         env, fs,
         path::{Path, PathBuf},
     },
+    tokio::spawn,
     tracing::{info, level_filters::LevelFilter},
 };
 
@@ -25,10 +26,10 @@ async fn main() {
 
     info!("Started bldhnd server");
 
-    // spawn(async move {
-    // let c = mb::client();
-    // let _ = c.fetch().await;
-    // });
+    spawn(async move {
+        let c = mb::client();
+        let _ = c.fetch().await;
+    });
 }
 
 pub fn working() -> PathBuf {
