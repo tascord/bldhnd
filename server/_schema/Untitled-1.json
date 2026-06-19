@@ -1,0 +1,887 @@
+{
+    "tags": [],
+    "release-group": {
+        "genres": [
+            {
+                "name": "indie rock",
+                "id": "ccd19ebf-052c-4afe-8ad9-fbb0a73f94a7",
+                "disambiguation": "",
+                "count": 1
+            },
+            {
+                "count": 1,
+                "disambiguation": "",
+                "id": "0e3fc579-2d24-4f20-9dae-736e1ec78798",
+                "name": "rock"
+            }
+        ],
+        "primary-type": "Album",
+        "aliases": [],
+        "tags": [
+            {
+                "count": 1,
+                "name": "indie rock"
+            },
+            {
+                "name": "rock",
+                "count": 1
+            }
+        ],
+        "id": "ef433400-0644-3622-bd0e-9ce09b34ebf2",
+        "secondary-type-ids": [],
+        "title": "Hello",
+        "disambiguation": "",
+        "first-release-date": "1999-04-19",
+        "secondary-types": [],
+        "artist-credit": [
+            {
+                "joinphrase": "",
+                "name": "Ben & Jason",
+                "artist": {
+                    "id": "71f13beb-f273-4af4-8154-a1c21c496dc3",
+                    "sort-name": "Ben & Jason",
+                    "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+                    "type": "Group",
+                    "aliases": [
+                        {
+                            "sort-name": "Ben and Jason",
+                            "ended": false,
+                            "type-id": null,
+                            "end": null,
+                            "type": null,
+                            "begin": null,
+                            "name": "Ben and Jason",
+                            "locale": null,
+                            "primary": null
+                        }
+                    ],
+                    "name": "Ben & Jason",
+                    "country": "GB",
+                    "disambiguation": ""
+                }
+            }
+        ],
+        "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc"
+    },
+    "relations": [
+        {
+            "begin": null,
+            "ended": false,
+            "url": {
+                "id": "8d93fd39-080e-44c7-8374-4e30af76d3c1",
+                "resource": "https://www.amazon.co.uk/gp/product/B00000JAVH"
+            },
+            "direction": "forward",
+            "source-credit": "",
+            "attributes": [],
+            "type-id": "4f2e710d-166c-480c-a293-2e2c8d658d87",
+            "target-credit": "",
+            "end": null,
+            "type": "amazon asin",
+            "attribute-values": {},
+            "attribute-ids": {},
+            "target-type": "url"
+        },
+        {
+            "attribute-values": {},
+            "type": "discogs",
+            "type-id": "4a78823c-1c53-4176-a5f3-58026c76f2bc",
+            "end": null,
+            "target-credit": "",
+            "target-type": "url",
+            "attribute-ids": {},
+            "ended": false,
+            "begin": null,
+            "attributes": [],
+            "url": {
+                "id": "7fe40d97-19e3-40a1-b3b2-374c341d538a",
+                "resource": "https://www.discogs.com/release/2214112"
+            },
+            "direction": "forward",
+            "source-credit": ""
+        }
+    ],
+    "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+    "media": [
+        {
+            "id": "0e8b23de-efc9-3fc1-b576-adf07b5641ab",
+            "format": "Mixed Mode CD",
+            "discs": [
+                {
+                    "offsets": [
+                        150,
+                        21222,
+                        40327,
+                        62355,
+                        81090,
+                        97440,
+                        114835,
+                        129020
+                    ],
+                    "id": "..Ti_fZvQQhVo1jYAgyWIRPnajQ-",
+                    "offset-count": 8,
+                    "sectors": 144925
+                },
+                {
+                    "sectors": 145075,
+                    "offset-count": 8,
+                    "id": "zmu.tKJZh.CS1hyFzSMxTpzUGOo-",
+                    "offsets": [
+                        150,
+                        21222,
+                        40327,
+                        62355,
+                        81090,
+                        97440,
+                        114835,
+                        129020
+                    ]
+                }
+            ],
+            "position": 1,
+            "format-id": "184c65db-2619-4577-be0c-5dcc1d630c5d",
+            "track-offset": 0,
+            "tracks": [
+                {
+                    "id": "b42bc810-abc0-3186-92df-781a5fd38d5b",
+                    "recording": {
+                        "tags": [],
+                        "relations": [],
+                        "length": 279893,
+                        "video": false,
+                        "disambiguation": "",
+                        "title": "Joe's Ark",
+                        "id": "ab3eb824-d810-40e0-acc3-886018b0c0be",
+                        "isrcs": [
+                            "GBARA9800091"
+                        ],
+                        "aliases": [],
+                        "genres": [],
+                        "artist-credit": [
+                            {
+                                "name": "Ben & Jason",
+                                "joinphrase": "",
+                                "artist": {
+                                    "country": "GB",
+                                    "name": "Ben & Jason",
+                                    "sort-name": "Ben & Jason",
+                                    "id": "71f13beb-f273-4af4-8154-a1c21c496dc3",
+                                    "disambiguation": "",
+                                    "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+                                    "type": "Group"
+                                }
+                            }
+                        ]
+                    },
+                    "position": 1,
+                    "length": 280960,
+                    "number": "1",
+                    "artist-credit": [
+                        {
+                            "artist": {
+                                "aliases": [
+                                    {
+                                        "sort-name": "Ben and Jason",
+                                        "ended": false,
+                                        "type-id": null,
+                                        "end": null,
+                                        "begin": null,
+                                        "type": null,
+                                        "name": "Ben and Jason",
+                                        "locale": null,
+                                        "primary": null
+                                    }
+                                ],
+                                "type": "Group",
+                                "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+                                "sort-name": "Ben & Jason",
+                                "id": "71f13beb-f273-4af4-8154-a1c21c496dc3",
+                                "disambiguation": "",
+                                "name": "Ben & Jason",
+                                "country": "GB"
+                            },
+                            "joinphrase": "",
+                            "name": "Ben & Jason"
+                        }
+                    ],
+                    "title": "Joe's Ark"
+                },
+                {
+                    "number": "2",
+                    "artist-credit": [
+                        {
+                            "joinphrase": "",
+                            "name": "Ben & Jason",
+                            "artist": {
+                                "id": "71f13beb-f273-4af4-8154-a1c21c496dc3",
+                                "sort-name": "Ben & Jason",
+                                "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+                                "type": "Group",
+                                "aliases": [
+                                    {
+                                        "name": "Ben and Jason",
+                                        "primary": null,
+                                        "locale": null,
+                                        "ended": false,
+                                        "sort-name": "Ben and Jason",
+                                        "type": null,
+                                        "begin": null,
+                                        "end": null,
+                                        "type-id": null
+                                    }
+                                ],
+                                "country": "GB",
+                                "name": "Ben & Jason",
+                                "disambiguation": ""
+                            }
+                        }
+                    ],
+                    "title": "Adam and Lorraine",
+                    "id": "d6517fcc-f026-3c0a-8af5-50b8fe9ea6d5",
+                    "recording": {
+                        "id": "84f3c2cc-ce9d-4825-add6-4a9bc01b423c",
+                        "isrcs": [
+                            "GBARA9800096"
+                        ],
+                        "aliases": [],
+                        "genres": [],
+                        "artist-credit": [
+                            {
+                                "joinphrase": "",
+                                "name": "Ben & Jason",
+                                "artist": {
+                                    "disambiguation": "",
+                                    "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+                                    "type": "Group",
+                                    "country": "GB",
+                                    "name": "Ben & Jason",
+                                    "id": "71f13beb-f273-4af4-8154-a1c21c496dc3",
+                                    "sort-name": "Ben & Jason"
+                                }
+                            }
+                        ],
+                        "tags": [],
+                        "length": 253840,
+                        "relations": [],
+                        "video": false,
+                        "title": "Adam and Lorraine",
+                        "disambiguation": ""
+                    },
+                    "position": 2,
+                    "length": 254733
+                },
+                {
+                    "artist-credit": [
+                        {
+                            "artist": {
+                                "disambiguation": "",
+                                "name": "Ben & Jason",
+                                "country": "GB",
+                                "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+                                "aliases": [
+                                    {
+                                        "name": "Ben and Jason",
+                                        "primary": null,
+                                        "locale": null,
+                                        "sort-name": "Ben and Jason",
+                                        "ended": false,
+                                        "type": null,
+                                        "begin": null,
+                                        "type-id": null,
+                                        "end": null
+                                    }
+                                ],
+                                "type": "Group",
+                                "sort-name": "Ben & Jason",
+                                "id": "71f13beb-f273-4af4-8154-a1c21c496dc3"
+                            },
+                            "name": "Ben & Jason",
+                            "joinphrase": ""
+                        }
+                    ],
+                    "number": "3",
+                    "title": "Everybody Hold Hands With Everybody Else",
+                    "id": "7dd0a9e1-48be-3c7b-916a-4f97f2cb209b",
+                    "position": 3,
+                    "recording": {
+                        "length": 292867,
+                        "relations": [],
+                        "tags": [],
+                        "disambiguation": "",
+                        "title": "Everybody Hold Hands With Everybody Else",
+                        "video": false,
+                        "genres": [],
+                        "aliases": [],
+                        "isrcs": [
+                            "GBARA9800079"
+                        ],
+                        "id": "470539b8-6fbe-456a-977a-651c757f754d",
+                        "artist-credit": [
+                            {
+                                "name": "Ben & Jason",
+                                "joinphrase": "",
+                                "artist": {
+                                    "type": "Group",
+                                    "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+                                    "disambiguation": "",
+                                    "id": "71f13beb-f273-4af4-8154-a1c21c496dc3",
+                                    "sort-name": "Ben & Jason",
+                                    "name": "Ben & Jason",
+                                    "country": "GB"
+                                }
+                            }
+                        ]
+                    },
+                    "length": 293706
+                },
+                {
+                    "title": "Thank You for Laughing",
+                    "number": "4",
+                    "artist-credit": [
+                        {
+                            "joinphrase": "",
+                            "name": "Ben & Jason",
+                            "artist": {
+                                "disambiguation": "",
+                                "name": "Ben & Jason",
+                                "country": "GB",
+                                "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+                                "aliases": [
+                                    {
+                                        "end": null,
+                                        "type-id": null,
+                                        "begin": null,
+                                        "type": null,
+                                        "ended": false,
+                                        "sort-name": "Ben and Jason",
+                                        "locale": null,
+                                        "primary": null,
+                                        "name": "Ben and Jason"
+                                    }
+                                ],
+                                "type": "Group",
+                                "id": "71f13beb-f273-4af4-8154-a1c21c496dc3",
+                                "sort-name": "Ben & Jason"
+                            }
+                        }
+                    ],
+                    "length": 249800,
+                    "id": "0046425e-2ff7-33a7-a6e7-f9e1e5555b4c",
+                    "recording": {
+                        "id": "ca90845b-59ca-4f30-886f-ca157ffa2f74",
+                        "isrcs": [
+                            "GBARA9800097"
+                        ],
+                        "aliases": [],
+                        "genres": [],
+                        "artist-credit": [
+                            {
+                                "joinphrase": "",
+                                "name": "Ben & Jason",
+                                "artist": {
+                                    "type": "Group",
+                                    "disambiguation": "",
+                                    "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+                                    "id": "71f13beb-f273-4af4-8154-a1c21c496dc3",
+                                    "sort-name": "Ben & Jason",
+                                    "country": "GB",
+                                    "name": "Ben & Jason"
+                                }
+                            }
+                        ],
+                        "tags": [],
+                        "length": 248560,
+                        "relations": [],
+                        "video": false,
+                        "title": "Thank You for Laughing",
+                        "disambiguation": ""
+                    },
+                    "position": 4
+                },
+                {
+                    "id": "2b22abf6-7909-3191-85b3-3021ca8bcc7b",
+                    "position": 5,
+                    "recording": {
+                        "tags": [],
+                        "length": 218000,
+                        "relations": [
+                            {
+                                "target-type": "artist",
+                                "artist": {
+                                    "disambiguation": "",
+                                    "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                                    "type": "Person",
+                                    "country": null,
+                                    "name": "Tom Aitkenhead",
+                                    "id": "ec175d2f-fe1d-4f18-9afc-ec9182730d43",
+                                    "sort-name": "Aitkenhead, Tom"
+                                },
+                                "attribute-ids": {},
+                                "attribute-values": {},
+                                "type": "engineer",
+                                "end": null,
+                                "target-credit": "",
+                                "type-id": "5dcc52af-7064-4051-8d62-7d80f4c3c907",
+                                "attributes": [],
+                                "source-credit": "",
+                                "direction": "backward",
+                                "ended": false,
+                                "begin": null
+                            },
+                            {
+                                "attribute-values": {},
+                                "type-id": "3e3102e1-1896-4f50-b5b2-dd9824e46efe",
+                                "target-credit": "",
+                                "end": null,
+                                "type": "mix",
+                                "target-type": "artist",
+                                "attribute-ids": {},
+                                "artist": {
+                                    "type": "Person",
+                                    "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                                    "disambiguation": "",
+                                    "id": "ec175d2f-fe1d-4f18-9afc-ec9182730d43",
+                                    "sort-name": "Aitkenhead, Tom",
+                                    "country": null,
+                                    "name": "Tom Aitkenhead"
+                                },
+                                "ended": false,
+                                "begin": null,
+                                "attributes": [],
+                                "direction": "backward",
+                                "source-credit": ""
+                            },
+                            {
+                                "direction": "backward",
+                                "source-credit": "",
+                                "attributes": [],
+                                "begin": null,
+                                "ended": false,
+                                "attribute-ids": {},
+                                "artist": {
+                                    "disambiguation": "",
+                                    "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                                    "type": "Person",
+                                    "name": "Tom Aitkenhead",
+                                    "country": null,
+                                    "id": "ec175d2f-fe1d-4f18-9afc-ec9182730d43",
+                                    "sort-name": "Aitkenhead, Tom"
+                                },
+                                "target-type": "artist",
+                                "type": "producer",
+                                "type-id": "5c0ceac3-feb4-41f0-868d-dc06f6e27fc0",
+                                "end": null,
+                                "target-credit": "",
+                                "attribute-values": {}
+                            },
+                            {
+                                "attribute-ids": {},
+                                "target-type": "work",
+                                "type": "performance",
+                                "target-credit": "",
+                                "end": null,
+                                "type-id": "a3005666-a872-32c3-ad06-98af558e99b0",
+                                "attribute-values": {},
+                                "source-credit": "",
+                                "direction": "forward",
+                                "attributes": [],
+                                "work": {
+                                    "iswcs": [],
+                                    "id": "de452b20-6eb1-44d5-b80c-e7fcca10d2e3",
+                                    "language": "eng",
+                                    "type-id": "f061270a-2fd6-32f1-a641-f0f8676d14e6",
+                                    "type": "Song",
+                                    "languages": [
+                                        "eng"
+                                    ],
+                                    "attributes": [],
+                                    "disambiguation": "",
+                                    "title": "On Days Like Yours"
+                                },
+                                "begin": null,
+                                "ended": false
+                            }
+                        ],
+                        "video": false,
+                        "title": "On Days Like Yours",
+                        "disambiguation": "",
+                        "isrcs": [
+                            "GBARA9800092"
+                        ],
+                        "id": "7d65b1d3-1d86-4b98-b920-140726c765ac",
+                        "genres": [],
+                        "aliases": [],
+                        "artist-credit": [
+                            {
+                                "artist": {
+                                    "sort-name": "Ben & Jason",
+                                    "id": "71f13beb-f273-4af4-8154-a1c21c496dc3",
+                                    "name": "Ben & Jason",
+                                    "country": "GB",
+                                    "type": "Group",
+                                    "disambiguation": "",
+                                    "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b"
+                                },
+                                "name": "Ben & Jason",
+                                "joinphrase": ""
+                            }
+                        ]
+                    },
+                    "length": 218000,
+                    "artist-credit": [
+                        {
+                            "joinphrase": "",
+                            "name": "Ben & Jason",
+                            "artist": {
+                                "name": "Ben & Jason",
+                                "country": "GB",
+                                "disambiguation": "",
+                                "sort-name": "Ben & Jason",
+                                "id": "71f13beb-f273-4af4-8154-a1c21c496dc3",
+                                "type": "Group",
+                                "aliases": [
+                                    {
+                                        "name": "Ben and Jason",
+                                        "locale": null,
+                                        "primary": null,
+                                        "sort-name": "Ben and Jason",
+                                        "ended": false,
+                                        "type-id": null,
+                                        "end": null,
+                                        "type": null,
+                                        "begin": null
+                                    }
+                                ],
+                                "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b"
+                            }
+                        }
+                    ],
+                    "number": "5",
+                    "title": "On Days Like Yours"
+                },
+                {
+                    "number": "6",
+                    "artist-credit": [
+                        {
+                            "artist": {
+                                "name": "Ben & Jason",
+                                "country": "GB",
+                                "disambiguation": "",
+                                "id": "71f13beb-f273-4af4-8154-a1c21c496dc3",
+                                "sort-name": "Ben & Jason",
+                                "aliases": [
+                                    {
+                                        "end": null,
+                                        "type-id": null,
+                                        "begin": null,
+                                        "type": null,
+                                        "ended": false,
+                                        "sort-name": "Ben and Jason",
+                                        "locale": null,
+                                        "primary": null,
+                                        "name": "Ben and Jason"
+                                    }
+                                ],
+                                "type": "Group",
+                                "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b"
+                            },
+                            "name": "Ben & Jason",
+                            "joinphrase": ""
+                        }
+                    ],
+                    "title": "You-Shaped Hole",
+                    "id": "4849b8a5-7a0d-3e5b-ab0f-8a8f073b0b91",
+                    "recording": {
+                        "tags": [],
+                        "length": 231560,
+                        "relations": [],
+                        "video": false,
+                        "title": "You-Shaped Hole",
+                        "disambiguation": "",
+                        "id": "120d7dc3-9cad-48e1-b10b-b685280a2c1b",
+                        "isrcs": [
+                            "GBARA9800081"
+                        ],
+                        "aliases": [],
+                        "genres": [],
+                        "artist-credit": [
+                            {
+                                "artist": {
+                                    "sort-name": "Ben & Jason",
+                                    "id": "71f13beb-f273-4af4-8154-a1c21c496dc3",
+                                    "country": "GB",
+                                    "name": "Ben & Jason",
+                                    "type": "Group",
+                                    "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+                                    "disambiguation": ""
+                                },
+                                "name": "Ben & Jason",
+                                "joinphrase": ""
+                            }
+                        ]
+                    },
+                    "position": 6,
+                    "length": 231933
+                },
+                {
+                    "length": 189133,
+                    "id": "108b2051-2c10-3995-a259-0818511307dd",
+                    "position": 7,
+                    "recording": {
+                        "artist-credit": [
+                            {
+                                "joinphrase": "",
+                                "name": "Ben & Jason",
+                                "artist": {
+                                    "type": "Group",
+                                    "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+                                    "disambiguation": "",
+                                    "id": "71f13beb-f273-4af4-8154-a1c21c496dc3",
+                                    "sort-name": "Ben & Jason",
+                                    "name": "Ben & Jason",
+                                    "country": "GB"
+                                }
+                            }
+                        ],
+                        "id": "4353a73b-dc77-43cf-8257-976cfc8946a3",
+                        "isrcs": [
+                            "GBARA9800094"
+                        ],
+                        "aliases": [],
+                        "genres": [],
+                        "video": false,
+                        "disambiguation": "",
+                        "title": "This Is Our Song",
+                        "tags": [],
+                        "length": 185933,
+                        "relations": []
+                    },
+                    "title": "This Is Our Song",
+                    "artist-credit": [
+                        {
+                            "artist": {
+                                "disambiguation": "",
+                                "name": "Ben & Jason",
+                                "country": "GB",
+                                "type": "Group",
+                                "aliases": [
+                                    {
+                                        "name": "Ben and Jason",
+                                        "primary": null,
+                                        "locale": null,
+                                        "ended": false,
+                                        "sort-name": "Ben and Jason",
+                                        "type": null,
+                                        "begin": null,
+                                        "end": null,
+                                        "type-id": null
+                                    }
+                                ],
+                                "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+                                "sort-name": "Ben & Jason",
+                                "id": "71f13beb-f273-4af4-8154-a1c21c496dc3"
+                            },
+                            "joinphrase": "",
+                            "name": "Ben & Jason"
+                        }
+                    ],
+                    "number": "7"
+                },
+                {
+                    "id": "b13824cb-547d-38d1-aa05-6056e0b87848",
+                    "position": 8,
+                    "recording": {
+                        "relations": [],
+                        "length": 212067,
+                        "tags": [],
+                        "disambiguation": "",
+                        "title": "Save",
+                        "video": false,
+                        "genres": [],
+                        "aliases": [],
+                        "isrcs": [
+                            "GBARA9800093"
+                        ],
+                        "id": "a30d3f3f-7e13-434d-a65b-319e56bfff41",
+                        "artist-credit": [
+                            {
+                                "artist": {
+                                    "type": "Group",
+                                    "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+                                    "disambiguation": "",
+                                    "id": "71f13beb-f273-4af4-8154-a1c21c496dc3",
+                                    "sort-name": "Ben & Jason",
+                                    "country": "GB",
+                                    "name": "Ben & Jason"
+                                },
+                                "name": "Ben & Jason",
+                                "joinphrase": ""
+                            }
+                        ]
+                    },
+                    "length": 214066,
+                    "artist-credit": [
+                        {
+                            "artist": {
+                                "type": "Group",
+                                "aliases": [
+                                    {
+                                        "name": "Ben and Jason",
+                                        "primary": null,
+                                        "locale": null,
+                                        "ended": false,
+                                        "sort-name": "Ben and Jason",
+                                        "begin": null,
+                                        "type": null,
+                                        "end": null,
+                                        "type-id": null
+                                    }
+                                ],
+                                "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+                                "sort-name": "Ben & Jason",
+                                "id": "71f13beb-f273-4af4-8154-a1c21c496dc3",
+                                "disambiguation": "",
+                                "country": "GB",
+                                "name": "Ben & Jason"
+                            },
+                            "joinphrase": "",
+                            "name": "Ben & Jason"
+                        }
+                    ],
+                    "number": "8",
+                    "title": "Save"
+                }
+            ],
+            "track-count": 8,
+            "title": ""
+        }
+    ],
+    "text-representation": {
+        "language": "eng",
+        "script": "Latn"
+    },
+    "barcode": "731455997026",
+    "title": "Hello",
+    "disambiguation": "",
+    "packaging": null,
+    "cover-art-archive": {
+        "darkened": false,
+        "artwork": false,
+        "back": false,
+        "front": false,
+        "count": 0
+    },
+    "asin": "B00000JAVH",
+    "status": "Official",
+    "release-events": [
+        {
+            "area": {
+                "name": "United Kingdom",
+                "disambiguation": "",
+                "id": "8a754a16-0027-3a29-b6d7-2b40ea0481ed",
+                "sort-name": "United Kingdom",
+                "type": null,
+                "type-id": null,
+                "iso-3166-1-codes": [
+                    "GB"
+                ]
+            },
+            "date": "1999-04-19"
+        }
+    ],
+    "id": "2e5f3c3c-0d3a-4542-88a5-d49962a92433",
+    "genres": [],
+    "annotation": null,
+    "aliases": [],
+    "date": "1999-04-19",
+    "country": "GB",
+    "artist-credit": [
+        {
+            "artist": {
+                "country": "GB",
+                "name": "Ben & Jason",
+                "disambiguation": "",
+                "tags": [
+                    {
+                        "name": "british",
+                        "count": 1
+                    },
+                    {
+                        "count": 1,
+                        "name": "english"
+                    },
+                    {
+                        "count": 1,
+                        "name": "rock and indie"
+                    },
+                    {
+                        "count": 1,
+                        "name": "uk"
+                    }
+                ],
+                "id": "71f13beb-f273-4af4-8154-a1c21c496dc3",
+                "sort-name": "Ben & Jason",
+                "genres": [],
+                "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+                "type": "Group",
+                "aliases": [
+                    {
+                        "ended": false,
+                        "sort-name": "Ben and Jason",
+                        "type": null,
+                        "begin": null,
+                        "end": null,
+                        "type-id": null,
+                        "name": "Ben and Jason",
+                        "primary": null,
+                        "locale": null
+                    }
+                ]
+            },
+            "name": "Ben & Jason",
+            "joinphrase": ""
+        }
+    ],
+    "packaging-id": null,
+    "quality": "normal",
+    "label-info": [
+        {
+            "label": {
+                "label-code": 7142,
+                "disambiguation": "subsidiary of Go! Discs; folded into UMG",
+                "name": "Go! Beat",
+                "type-id": "7aaa37fe-2def-3476-b359-80245850062d",
+                "genres": [],
+                "aliases": [
+                    {
+                        "primary": null,
+                        "locale": null,
+                        "name": "Go Beat",
+                        "begin": null,
+                        "type": null,
+                        "end": null,
+                        "type-id": null,
+                        "ended": false,
+                        "sort-name": "Go Beat"
+                    },
+                    {
+                        "type": null,
+                        "begin": null,
+                        "type-id": null,
+                        "end": null,
+                        "sort-name": "Go! Beat Records",
+                        "ended": false,
+                        "primary": null,
+                        "locale": null,
+                        "name": "Go! Beat Records"
+                    }
+                ],
+                "type": "Original Production",
+                "tags": [],
+                "sort-name": "Go! Beat",
+                "id": "cd275ac6-9af0-4465-895b-462208cb716e"
+            },
+            "catalog-number": "559 970-2"
+        }
+    ]
+}

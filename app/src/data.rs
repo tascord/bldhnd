@@ -1,18 +1,21 @@
-use std::{
-    fmt::Display, hash::Hash, sync::{Arc, LazyLock, RwLock}, time::{Duration, Instant}
+use {
+    crate::config,
+    async_trait::async_trait,
+    chrono::NaiveDate,
+    dashmap::DashMap,
+    reqwest::Client,
+    std::{
+        fmt::Display,
+        hash::Hash,
+        sync::{Arc, LazyLock, RwLock},
+        time::{Duration, Instant},
+    },
+    zeroize::Zeroizing,
 };
 
-use async_trait::async_trait;
-use chrono::NaiveDate;
-use dashmap::DashMap;
-use reqwest::Client;
-use zeroize::Zeroizing;
-
-use crate::config;
-
-/* =========================================================
-   Search Result
-========================================================= */
+// =========================================================
+// Search Result
+// =========================================================
 
 #[derive(Debug, Clone)]
 pub struct SearchResult {
@@ -22,9 +25,9 @@ pub struct SearchResult {
     pub size_gb: f32,
 }
 
-/* =========================================================
-   Simple TTL Cache
-========================================================= */
+// =========================================================
+// Simple TTL Cache
+// =========================================================
 
 #[derive(Clone)]
 struct CacheEntry<V> {
@@ -43,12 +46,7 @@ where
     K: std::hash::Hash + Eq + Clone,
     V: Clone,
 {
-    pub fn new(ttl: Duration) -> Self {
-        Self {
-            inner: DashMap::new(),
-            ttl,
-        }
-    }
+    pub fn new(ttl: Duration) -> Self { Self { inner: DashMap::new(), ttl } }
 
     pub fn get(&self, key: &K) -> Option<V> {
         let entry = self.inner.get(key)?;
@@ -61,19 +59,13 @@ where
     }
 
     pub fn insert(&self, key: K, value: V) {
-        self.inner.insert(
-            key,
-            CacheEntry {
-                value,
-                expires_at: Instant::now() + self.ttl,
-            },
-        );
+        self.inner.insert(key, CacheEntry { value, expires_at: Instant::now() + self.ttl });
     }
 }
 
-/* =========================================================
-   Trait
-========================================================= */
+// =========================================================
+// Trait
+// =========================================================
 
 #[async_trait]
 pub trait KnowledgeBase: Send + Sync {
@@ -81,9 +73,9 @@ pub trait KnowledgeBase: Send + Sync {
     async fn search(&self, q: &str) -> anyhow::Result<Vec<SearchResult>>;
 }
 
-/* =========================================================
-   MusicBrainz
-========================================================= */
+// =========================================================
+// MusicBrainz
+// =========================================================
 
 pub struct MusicBrainz {
     key: Zeroizing<String>,
@@ -103,9 +95,7 @@ impl MusicBrainz {
 
 #[async_trait]
 impl KnowledgeBase for MusicBrainz {
-    async fn login(&self) -> anyhow::Result<()> {
-        Ok(())
-    }
+    async fn login(&self) -> anyhow::Result<()> { Ok(()) }
 
     async fn search(&self, q: &str) -> anyhow::Result<Vec<SearchResult>> {
         let query = q.to_string();
@@ -114,10 +104,7 @@ impl KnowledgeBase for MusicBrainz {
             return Ok(cached);
         }
 
-        let url = format!(
-            "https://musicbrainz.org/ws/2/release/?query={}&fmt=json",
-            urlencoding::encode(&query)
-        );
+        let url = format!("https://musicbrainz.org/ws/2/release/?query={}&fmt=json", urlencoding::encode(&query));
 
         let resp = self
             .http
@@ -146,9 +133,9 @@ impl KnowledgeBase for MusicBrainz {
     }
 }
 
-/* =========================================================
-   TMDB
-========================================================= */
+// =========================================================
+// TMDB
+// =========================================================
 
 pub struct TMDB {
     key: Zeroizing<String>,
@@ -173,12 +160,7 @@ impl KnowledgeBase for TMDB {
     async fn login(&self) -> anyhow::Result<()> {
         let url = "https://api.themoviedb.org/3/authentication";
 
-        let resp = self
-            .http
-            .get(url)
-            .bearer_auth(self.key.as_str())
-            .send()
-            .await?;
+        let resp = self.http.get(url).bearer_auth(self.key.as_str()).send().await?;
 
         if resp.status().is_success() {
             *self.token.write().unwrap() = Some(self.key.to_string());
@@ -194,32 +176,18 @@ impl KnowledgeBase for TMDB {
             return Ok(cached);
         }
 
-        let url = format!(
-            "https://api.themoviedb.org/3/search/multi?query={}",
-            urlencoding::encode(&query)
-        );
+        let url = format!("https://api.themoviedb.org/3/search/multi?query={}", urlencoding::encode(&query));
 
-        let resp = self
-            .http
-            .get(url)
-            .bearer_auth(self.key.as_str())
-            .send()
-            .await?
-            .json::<serde_json::Value>()
-            .await?;
+        let resp = self.http.get(url).bearer_auth(self.key.as_str()).send().await?.json::<serde_json::Value>().await?;
 
         let mut results = Vec::new();
 
         if let Some(items) = resp["results"].as_array() {
             for i in items {
                 results.push(SearchResult {
-                    name: i["title"]
-                        .as_str()
-                        .or_else(|| i["name"].as_str())
-                        .unwrap_or("")
-                        .to_string(),
+                    name: i["title"].as_str().or_else(|| i["name"].as_str()).unwrap_or("").to_string(),
                     release: NaiveDate::from_ymd_opt(2000, 1, 1).unwrap(),
-                    ty: i["media_type"].as_str().unwrap_or("unknown").to_string(),
+                    ty: format!("Music | {}", i["media_type"].as_str().unwrap_or("unknown")),
                     size_gb: 0.0,
                 });
             }
@@ -230,9 +198,9 @@ impl KnowledgeBase for TMDB {
     }
 }
 
-/* =========================================================
-   TVDB
-========================================================= */
+// =========================================================
+// TVDB
+// =========================================================
 
 pub struct TVDB {
     key: Zeroizing<String>,
@@ -285,10 +253,7 @@ impl KnowledgeBase for TVDB {
 
         let token = self.token.read().unwrap().clone();
 
-        let mut req = self
-            .http
-            .get("https://api4.thetvdb.com/v4/search")
-            .query(&[("query", &query)]);
+        let mut req = self.http.get("https://api4.thetvdb.com/v4/search").query(&[("query", &query)]);
 
         if let Some(t) = token {
             req = req.bearer_auth(t);
@@ -318,14 +283,8 @@ static MB_CLIENT: LazyLock<Arc<MusicBrainz>> = LazyLock::new(|| Arc::new(MusicBr
 static TM_CLIENT: LazyLock<Arc<TMDB>> = LazyLock::new(|| Arc::new(TMDB::new()));
 static TV_CLIENT: LazyLock<Arc<TVDB>> = LazyLock::new(|| Arc::new(TVDB::new()));
 
-pub fn mb() -> Arc<MusicBrainz> {
-    MB_CLIENT.clone()
-}
+pub fn mb() -> Arc<MusicBrainz> { MB_CLIENT.clone() }
 
-pub fn tm() -> Arc<TMDB> {
-    TM_CLIENT.clone()
-}
+pub fn tm() -> Arc<TMDB> { TM_CLIENT.clone() }
 
-pub fn tv() -> Arc<TVDB> {
-    TV_CLIENT.clone()
-}
+pub fn tv() -> Arc<TVDB> { TV_CLIENT.clone() }

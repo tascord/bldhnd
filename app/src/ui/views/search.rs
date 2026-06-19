@@ -1,27 +1,28 @@
-use std::sync::{Arc, RwLock};
-
-use to_and_fro::ToAndFro;
-use tokio::{spawn, task::spawn_local};
-
-use crate::{data::{KnowledgeBase, mb, tm, tv}, events::{SubscriptionHandle, SubscriptionPriority}, ui::{components::{Focusable, InputEvent}, views::results::ResultsView}};
-
 use {
-    crate::ui::{
-        components::{input::Input, radio::Radio},
-        views::{hcenter, home::BANNER_FONT, vstack},
+    crate::{
+        data::{KnowledgeBase, mb, tm, tv},
+        events::{SubscriptionHandle, SubscriptionPriority},
+        ui::{
+            components::{Focusable, InputEvent, input::Input, radio::Radio},
+            views::{hcenter, home::BANNER_FONT, results::ResultsView, vstack},
+        },
     },
     ratatui::{
         layout::Constraint,
         prelude::*,
         widgets::{Paragraph, WidgetRef},
     },
+    std::sync::{Arc, RwLock},
+    to_and_fro::ToAndFro,
+    tokio::{spawn, task::spawn_local},
+    tracing::warn,
 };
 
 #[derive(ToAndFro)]
 pub enum SearchType {
     Music,
     Movie,
-    Series
+    Series,
 }
 
 pub struct SearchView {
@@ -33,7 +34,7 @@ pub struct SearchView {
     results: Arc<RwLock<Option<ResultsView>>>,
 
     _radio: Option<SubscriptionHandle<InputEvent<usize>>>,
-    _input: Option<SubscriptionHandle<InputEvent<String>>>
+    _input: Option<SubscriptionHandle<InputEvent<String>>>,
 }
 
 #[allow(clippy::new_without_default)]
@@ -58,7 +59,9 @@ impl SearchView {
         this._radio = Some(this.radio.on(SubscriptionPriority::Low, {
             let st = this.search_ty.clone();
             move |ev| {
-                if let InputEvent::Submit(ev) = (**ev).clone() {*st.write().unwrap() =SearchType::list()[ev]}
+                if let InputEvent::Submit(ev) = (**ev).clone() {
+                    *st.write().unwrap() = SearchType::list()[ev]
+                }
             }
         }));
 
@@ -82,17 +85,28 @@ impl SearchView {
 
                     inp.blur();
                     rad.blur();
+                    inp.load(true);
 
                     spawn(async move {
-                        let r = kb.search(&q).await.unwrap();
-                        *rs.write().unwrap() = Some(ResultsView::new(r, {
-                            let rs = rs.clone();
-                            move || {
-                                *rs.write().unwrap() = None;
+                        match kb.search(&q).await {
+                            Ok(r) => {
+                                *rs.write().unwrap() = Some(ResultsView::new(r, {
+                                    let rs = rs.clone();
+                                    move || {
+                                        *rs.write().unwrap() = None;
+                                        inp.focus();
+                                        rad.focus();
+                                        inp.load(false);
+                                    }
+                                }));
+                            }
+                            Err(_) => {
+                                warn!("Failed to fetch data");
                                 inp.focus();
                                 rad.focus();
+                                inp.load(false);
                             }
-                        }));
+                        }
                     });
                 }
             }
@@ -110,7 +124,6 @@ impl WidgetRef for SearchView {
     where
         Self: Sized,
     {
-
         if let Some(res) = self.results.read().unwrap().as_ref() {
             res.render_ref(area, buf);
             return;

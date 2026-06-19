@@ -1,13 +1,15 @@
-use crate::ui::views::settings::SettingsView;
-
 use {
     crate::{
         events::{EventTarget, SubscriptionPriority},
-        ui::views::{home::HomeView, library::LibraryView, search::SearchView},
+        ui::views::{home::HomeView, library::LibraryView, search::SearchView, settings::SettingsView},
     },
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
     ratatui::{
         DefaultTerminal, Frame,
+        layout::{
+            Constraint::Length,
+            Direction::{Horizontal, Vertical},
+        },
         prelude::*,
         style::Color::{Black, White},
         widgets::{Block, BorderType, Borders, Paragraph, WidgetRef},
@@ -23,9 +25,9 @@ use {
 
 pub mod home;
 pub mod library;
+pub mod results;
 pub mod search;
 pub mod settings;
-pub mod results;
 
 static MODEL: LazyLock<Arc<Model>> = LazyLock::new(|| Arc::new(Model::new()));
 
@@ -94,7 +96,7 @@ pub enum ModelView {
     Home(HomeView),
     Search(SearchView),
     Library(LibraryView),
-    Settings(SettingsView)
+    Settings(SettingsView),
 }
 
 impl Default for ModelView {
@@ -201,6 +203,14 @@ impl Model {
         if let Some(l) = lock.as_ref() {
             l.render(f.area().inner(Margin::new(4, 3)), f.buffer_mut())
         }
+
+        // sonner
+        // let x = Layout::new(Horizontal, [Constraint::Fill(1), Constraint::Length(40.min(f.area().width))])
+            // .split(f.area().inner(Margin::new(3, 4)));
+        // let y = Layout::new(Vertical, [Constraint::Length(5), Constraint::Fill(1)]).split(x[1])[0];
+
+        // Block::new().bg(Color::Cyan).render(y, f.buffer_mut());
+        crate::ui::components::sonner::sonner().render_ref(f.area(), f.buffer_mut());
     }
 
     pub fn run(terminal: &mut DefaultTerminal) -> anyhow::Result<()> {

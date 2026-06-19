@@ -1,16 +1,12 @@
-use crate::ui::components::{Focusable, scroll::ScrollItem};
-
 use {
     crate::{
         events::{EventTarget, SubscriptionHandle, SubscriptionPriority},
         ui::{
-            components::InputEvent,
+            components::{Focusable, InputEvent, scroll::ScrollItem},
             views::{ModelEvent, model},
         },
     },
-    crossterm::
-        event::{KeyCode, KeyModifiers}
-    ,
+    crossterm::event::{KeyCode, KeyModifiers},
     ratatui::{
         style::{Color::White, Style},
         text::{Line, Span},
@@ -49,10 +45,14 @@ impl Cursor {
     fn extend(self, pos: usize) -> Self { Self { caret: pos, anchor: self.anchor } }
 }
 
+const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const SPINNER_INTERVAL_MS: u128 = 80;
+
 pub struct Input {
     focused: Arc<AtomicBool>,
     text: Arc<RwLock<String>>,
     cursor: Arc<RwLock<Cursor>>,
+    loading: Arc<AtomicBool>,
     label: String,
     ts: Instant,
     subs: Option<[SubscriptionHandle<ModelEvent>; 1]>,
@@ -60,13 +60,9 @@ pub struct Input {
 }
 
 impl ScrollItem for Input {
-    fn height(&self) -> u16 {
-        3
-    }
+    fn height(&self) -> u16 { 3 }
 
-    fn width(&self) -> u16 {
-        0
-    }
+    fn width(&self) -> u16 { 0 }
 }
 
 impl Deref for Input {
@@ -85,6 +81,7 @@ impl Input {
             ts: Instant::now(),
             subs: None,
             ev: EventTarget::new(),
+            loading: AtomicBool::new(false).into(),
         };
 
         let sub = model().target.on(SubscriptionPriority::High, {
@@ -92,12 +89,13 @@ impl Input {
             let cursor = this.cursor.clone();
             let focused = this.focused.clone();
             let evt = this.ev.clone();
+            let loading = this.loading.clone();
 
             move |ev| {
                 if let ModelEvent::KeyPress(key_event) = **ev
                     && focused.load(SeqCst)
+                    && !loading.load(SeqCst)
                 {
-                    let prev_foc = focused.load(SeqCst);
                     let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
                     let shft = key_event.modifiers.contains(KeyModifiers::SHIFT);
 
@@ -242,6 +240,15 @@ impl Input {
 
         (start, start + avail)
     }
+
+    fn spinner_frame(&self) -> &'static str {
+        let idx = (self.ts.elapsed().as_millis() / SPINNER_INTERVAL_MS) as usize % SPINNER_FRAMES.len();
+        SPINNER_FRAMES[idx]
+    }
+
+    pub fn load(&self, v: bool) {
+        self.loading.store(v, SeqCst);
+    }
 }
 
 impl Focusable for Input {
@@ -263,9 +270,12 @@ impl WidgetRef for Input {
 
         let sel_lo = cur.sel_lo();
         let sel_hi = cur.sel_hi();
+        let is_loading = self.loading.load(SeqCst);
 
         // Rounded border with Borders::ALL eats one column on each side.
-        let avail = area.width.saturating_sub(2) as usize;
+        let border_avail = area.width.saturating_sub(2) as usize;
+        // Reserve the last two columns for " " + spinner while loading.
+        let avail = border_avail.saturating_sub(if is_loading { 2 } else { 0 });
         let total = text.chars().count();
         let (win_lo, win_hi) = Self::scroll_window(total, avail, sel_lo, sel_hi, cur.caret);
 
@@ -290,17 +300,35 @@ impl WidgetRef for Input {
         let after = Span::styled(visible.get(rel_sel_hi..).unwrap_or_default(), Style::new());
         let caret = Span::styled(" ", blink);
 
-        let line = if rel_caret == rel_sel_lo {
-            Line::from_iter([before, caret, selected, after])
+        let mut spans = if rel_caret == rel_sel_lo {
+            vec![before, caret, selected, after]
         } else {
-            Line::from_iter([before, selected, caret, after])
+            vec![before, selected, caret, after]
         };
 
+        if is_loading {
+            let visible_len = win_hi - win_lo;
+            let pad = avail.saturating_sub(visible_len);
+            if pad > 0 {
+                spans.push(Span::raw(" ".repeat(pad)));
+            }
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(self.spinner_frame(), Style::new().white()));
+        }
+
+        let line = Line::from_iter(spans);
+
         Paragraph::new(line)
-            .block(Block::new().border_type(BorderType::Rounded).borders(Borders::ALL).border_style(match self.focused.load(SeqCst) {
-                true => Style::new().white(),
-                false => Style::new().gray(),
-            }).title(self.label.as_str()))
+            .block(
+                Block::new()
+                    .border_type(BorderType::Rounded)
+                    .borders(Borders::ALL)
+                    .border_style(match self.focused.load(SeqCst) {
+                        true => Style::new().white(),
+                        false => Style::new().gray(),
+                    })
+                    .title(self.label.as_str()),
+            )
             .render(area, buf);
     }
 }
