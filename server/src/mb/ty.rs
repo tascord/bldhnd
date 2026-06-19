@@ -1,154 +1,4 @@
-use std::sync::{LazyLock, OnceLock};
-
-use {
-    crate::{KnowledgeBase, db, working},
-    anyhow::{anyhow, bail},
-    futures::StreamExt,
-    redb::{Database, ReadableTable, TableDefinition},
-    serde::{Deserialize, Serialize},
-    std::sync::{Arc, RwLock},
-    tokio::{
-        fs::OpenOptions,
-        io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-        process::Command,
-    },
-    tracing::{error, info, warn},
-};
-
-static CLIENT: LazyLock<Arc<MusicBrainz>> = LazyLock::new(|| Arc::new(MusicBrainz::new()));
-pub fn client() -> Arc<MusicBrainz> {
-    CLIENT.clone()
-}
-
-pub struct MusicBrainz {
-    latest: Arc<RwLock<[char; 16]>>,
-    db: Database,
-}
-
-pub struct Release {}
-
-impl KnowledgeBase for MusicBrainz {
-    async fn fetch(&self) -> anyhow::Result<()> {
-        self.update_latest().await?;
-        self.fetch_release().await?;
-        self.ingest().await?;
-
-        Ok(())
-    }
-}
-
-impl MusicBrainz {
-    pub fn new() -> Self {
-        Self {
-            latest: Arc::new(RwLock::new(['\0'; 16])),
-            db: Database::create(db().join("mb.db")).expect("Failed to create MusicBrain db"),
-        }
-    }
-
-    async fn update_latest(&self) -> anyhow::Result<()> {
-        let latest = reqwest::get("https://data.metabrainz.org/pub/musicbrainz/data/json-dumps/")
-            .await?
-            .error_for_status()?
-            .text()
-            .await?;
-
-        if latest.chars().zip(&self.latest.read().map_err(|e| anyhow!("{e:?}")).map(|v| *v)?).all(|(a, b)| a == *b) {
-            return Ok(());
-        }
-
-        let mut arr = ['\0'; 16];
-        for (i, c) in latest.chars().take(16).enumerate() {
-            arr[i] = c;
-        }
-
-        *self.latest.write().map_err(|e| anyhow!("{e:?}"))? = arr;
-
-        Ok(())
-    }
-
-    async fn fetch_release(&self) -> anyhow::Result<()> {
-        let latest = self.latest.read().map(|e| String::from_iter(*e)).map_err(|e| anyhow!("{e:?}"))?;
-        let path = working().join(format!("mb_release_{}.tar.xz", latest));
-
-        if path.exists() {
-            warn!("Release file {} already exists in cache", path.display());
-            return Ok(());
-        }
-
-        let mut file = {
-            let mut o = OpenOptions::new();
-            o.create_new(true).write(true).open(&path).await.unwrap()
-        };
-
-        info!("Fetching mb json dump");
-        let mut stream =
-            reqwest::get(format!("https://data.metabrainz.org/pub/musicbrainz/data/json-dumps/{}/release.tar.xz", latest))
-                .await?
-                .error_for_status()?
-                .bytes_stream();
-
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            file.write_all(&chunk).await?;
-        }
-
-        info!("mb json dump downloaded");
-        file.flush().await?;
-
-        if !Command::new("which").arg("tar").status().await?.success() {
-            error!("No 'tar' binary available. Can't unzip");
-            bail!("No tar binary found");
-        }
-
-        if !Command::new("tar")
-            .arg("-xvf")
-            .arg(path)
-            .arg("mdump/release")
-            .current_dir(working())
-            .spawn()?
-            .wait()
-            .await?
-            .success()
-        {
-            error!("Failed to unzip mb dump");
-            bail!("Failed to unzip");
-        }
-
-        info!("mb json dump extracted");
-
-        Ok(())
-    }
-
-    async fn ingest(&self) -> anyhow::Result<()> {
-        let file = OpenOptions::new().read(true).open(working().join("release")).await?;
-        let mut lines = BufReader::new(file).lines();
-
-        let tx = self.db.begin_write()?;
-        let mut t_data = tx.open_table(TableDefinition::<String, String>::new("releases"))?;
-        let mut t_idx = tx.open_table(TableDefinition::<String, Vec<String>>::new("indexes"))?;
-
-        while let Some(line) = lines.next_line().await? {
-            match serde_json::from_str::<Root>(&line) {
-                Ok(it) => {
-                    t_data.insert(it.id.clone(), line)?;
-                    t_idx.insert(it.title.clone(), {
-                        let mut v = t_idx.get(it.title).ok().flatten().map(|v| v.value()).unwrap_or_default();
-                        v.push(it.id);
-                        v
-                    })?;
-                }
-                Err(e) => {
-                    warn!("Failed to parse release item: {e:?}");
-                }
-            }
-        }
-
-        // tx.commit()?;
-        Ok(())
-    }
-}
-
-//
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -441,4 +291,130 @@ pub struct Label {
     #[serde(rename = "sort-name")]
     pub sort_name: String,
     pub id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MinifiedRelease {
+    // Core Album/Release Info
+    pub id: String,
+    pub title: String,
+    pub release_date: Option<String>,
+    pub country: Option<String>,
+    pub barcode: Option<String>,
+    pub asin: Option<String>,
+
+    // Artists & Credits (Flattened string for searching, structured array for Plex metadata)
+    pub primary_artist: String,
+    pub artist_credits: Vec<MinifiedArtist>,
+
+    // Search & Categorization Indexing
+    pub genres: Vec<String>,
+    pub tags: Vec<String>,
+
+    // Media & Tracks (Highly minimized tree)
+    pub total_discs: usize,
+    pub total_tracks: usize,
+    pub tracks: Vec<MinifiedTrack>,
+
+    // Plex specific flags
+    pub has_front_cover: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MinifiedArtist {
+    pub id: String,
+    pub name: String,
+    pub sort_name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MinifiedTrack {
+    pub id: String,
+    pub position: i64,      // Track number on the disc
+    pub disc_position: i64, // Disc number
+    pub title: String,
+    pub length_ms: Option<i64>,
+    pub artist: String, // Simplified display string for the track artist
+}
+
+impl From<Root> for MinifiedRelease {
+    fn from(root: Root) -> Self {
+        // 1. Build cohesive primary artist names and credits
+        let artist_credits: Vec<MinifiedArtist> = root.artist_credit
+            .iter()
+            .map(|ac| MinifiedArtist {
+                id: ac.artist.id.clone(),
+                name: ac.artist.name.clone(),
+                sort_name: ac.artist.sort_name.clone(),
+            })
+            .collect();
+
+        let primary_artist = root.artist_credit
+            .iter()
+            .map(|ac| {
+                let name = &ac.artist.name;
+                let phrase = ac.joinphrase.as_deref().unwrap_or("");
+                format!("{}{}", name, phrase)
+            })
+            .collect::<Vec<String>>()
+            .join("");
+
+        // 2. Extract Genres from both Release level and ReleaseGroup level
+        let mut genres = Vec::new();
+        for genre in root.release_group.genres {
+            genres.push(genre.name);
+        }
+        // Fallback for release group tags
+        let mut tags: Vec<String> = root.release_group.tags
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+
+        // 3. Process Medias & Tracks down into flat items
+        let total_discs = root.media.len();
+        let mut total_tracks = 0;
+        let mut tracks = Vec::new();
+
+        for medium in root.media {
+            total_tracks += medium.tracks.len();
+            for track in medium.tracks {
+                let track_artist = track.artist_credit
+                    .iter()
+                    .map(|ac| format!("{}{}", ac.artist.name, ac.joinphrase.as_deref().unwrap_or("")))
+                    .collect::<Vec<String>>()
+                    .join("");
+
+                tracks.push(MinifiedTrack {
+                    id: track.id,
+                    position: track.position,
+                    disc_position: medium.position,
+                    title: track.title,
+                    length_ms: track.length.or(track.recording.length),
+                	artist: if track_artist.is_empty() { primary_artist.clone() } else { track_artist },
+                });
+            }
+        }
+
+        // 4. Build output struct
+        MinifiedRelease {
+            id: root.id,
+            title: root.title,
+            // Prefer the broad Release Group date, fallback to the specific release date
+            release_date: root.date.or(root.release_group.first_release_date),
+            country: root.country,
+            barcode: root.barcode,
+            asin: root.asin,
+            primary_artist,
+            artist_credits,
+            genres,
+            tags,
+            total_discs,
+            total_tracks,
+            tracks,
+            has_front_cover: root.cover_art_archive.front,
+        }
+    }
 }
