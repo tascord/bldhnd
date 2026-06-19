@@ -3,8 +3,7 @@ use {
         env, fs,
         path::{Path, PathBuf},
     },
-    tokio::spawn,
-    tracing::{info, level_filters::LevelFilter},
+    tracing::{info, level_filters::LevelFilter, warn},
 };
 
 mod mb;
@@ -12,7 +11,7 @@ mod tm;
 mod tv;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_file(true)
         .with_level(true)
@@ -26,10 +25,19 @@ async fn main() {
 
     info!("Started bldhnd server");
 
-    spawn(async move {
-        let c = mb::client();
-        let _ = c.fetch().await;
-    });
+    let stale = fs::read_dir(working())?.collect::<Result<Vec<_>, _>>()?;
+    if !stale.is_empty() {
+        warn!(
+            "Stale files in cache ({}): {}",
+            working().display(),
+            stale.iter().map(|s| s.file_name().display().to_string()).collect::<Vec<_>>().join(", ")
+        );
+    }
+
+    let c = mb::client();
+    c.fetch().await?;
+
+    Ok(())
 }
 
 pub fn working() -> PathBuf {

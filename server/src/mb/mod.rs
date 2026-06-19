@@ -13,7 +13,7 @@ use {
         io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     },
     tokio_tar::Archive,
-    tracing::{info, warn},
+    tracing::{debug, error, info, warn},
 };
 
 pub mod ty;
@@ -25,8 +25,6 @@ pub struct MusicBrainz {
     latest: Arc<RwLock<[char; 16]>>,
     db: Database,
 }
-
-pub struct Release {}
 
 impl KnowledgeBase for MusicBrainz {
     async fn fetch(&self) -> anyhow::Result<()> {
@@ -46,17 +44,22 @@ impl MusicBrainz {
         }
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self))]
     async fn update_latest(&self) -> anyhow::Result<()> {
-        let latest = reqwest::get("https://data.metabrainz.org/pub/musicbrainz/data/json-dumps/")
-            .await?
-            .error_for_status()?
-            .text()
-            .await?;
+        let url = "https://data.metabrainz.org/pub/musicbrainz/data/json-dumps/LATEST";
+        info!(%url, "Fetching latest release tag");
 
-        if latest.chars().zip(&self.latest.read().map_err(|e| anyhow!("{e:?}")).map(|v| *v)?).all(|(a, b)| a == *b) {
+        let latest = reqwest::get(url).await?.error_for_status()?.text().await?;
+
+        let current = *self.latest.read().map_err(|e| anyhow!("{e:?}"))?;
+        let current = String::from_iter(&current);
+
+        if latest == current {
+            info!(latest = %latest, "Latest release tag unchanged");
             return Ok(());
         }
+
+        info!(old_latest = %current, new_latest = %latest, "Updated latest release tag");
 
         let mut arr = ['\0'; 16];
         for (i, c) in latest.chars().take(16).enumerate() {
@@ -68,55 +71,77 @@ impl MusicBrainz {
         Ok(())
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self))]
     async fn fetch_release(&self) -> anyhow::Result<()> {
         let latest = self.latest.read().map(|e| String::from_iter(*e)).map_err(|e| anyhow!("{e:?}"))?;
         let path = working().join(format!("mb_release_{}.tar.xz", latest));
 
+        info!(latest = %latest, path = %path.display(), "Checking for cached release archive");
+
         if path.exists() {
-            warn!("Release file {} already exists in cache", path.display());
+            info!(path = %path.display(), "Release archive already cached");
             return Ok(());
         }
 
-        let mut file = {
-            let mut o = OpenOptions::new();
-            o.create_new(true).write(true).open(&path).await.unwrap()
-        };
+        let mut file = OpenOptions::new().create_new(true).write(true).open(&path).await?;
 
-        info!("Fetching mb json dump");
-        let mut stream =
-            reqwest::get(format!("https://data.metabrainz.org/pub/musicbrainz/data/json-dumps/{}/release.tar.xz", latest))
-                .await?
-                .error_for_status()?
-                .bytes_stream();
+        let url = format!("https://data.metabrainz.org/pub/musicbrainz/data/json-dumps/{}/release.tar.xz", latest);
+        info!(%url, "Fetching MusicBrainz release archive");
+
+        let res = reqwest::get(&url).await?.error_for_status()?;
+        let size = res.content_length().unwrap_or(0) as usize;
+
+        if size > 0 {
+            info!(total_size = size, "Response content length reported");
+        } else {
+            info!("Response content length unknown");
+        }
+
+        let mut stream = res.bytes_stream();
+        let mut downloaded = 0;
 
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
             file.write_all(&chunk).await?;
+
+            downloaded += chunk.len();
+            if size > 0 {
+                let progress = downloaded as f64 / size as f64 * 100.0;
+                info!(downloaded, total_size = size, progress = %format!("{progress:.2}%"), "Download progress");
+            } else {
+                debug!(downloaded, "Downloaded bytes so far");
+            }
         }
 
-        info!("mb json dump downloaded");
+        info!(path = %path.display(), downloaded = downloaded, "Download complete");
         file.flush().await?;
 
         Ok(())
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self))]
     async fn process_and_ingest(&self) -> anyhow::Result<()> {
-        let file = File::open(working().join("release")).await?;
+        let path = working().join("release");
+        info!(path = %path.display(), "Opening MusicBrainz release archive");
+
+        let file = File::open(&path).await?;
         let reader = BufReader::new(file);
 
         let decoder = GzipDecoder::new(reader);
         let mut archive = Archive::new(decoder);
 
         let mut entries = archive.entries()?;
+        let mut processed = 0usize;
+        let mut failures = 0usize;
 
         while let Some(entry) = entries.next().await {
             let entry = entry?;
             let entry_path = entry.path()?;
 
+            debug!(entry_path = %entry_path.display(), "Inspecting archive entry");
+
             if entry_path == Path::new("mdump/release") {
-                info!("Found mdump/release, starting line-by-line processing...");
+                info!(entry_path = %entry_path.display(), "Found mdump/release, starting line-by-line processing");
 
                 let mut line_reader = BufReader::new(entry).lines();
 
@@ -134,18 +159,21 @@ impl MusicBrainz {
                                 v.push(it.id);
                                 v
                             })?;
+                            processed += 1;
                         }
                         Err(e) => {
-                            warn!("Failed to parse release item: {e:?}");
+                            failures += 1;
+                            warn!(error = %e, line = %line, "Failed to parse release item");
                         }
                     }
                 }
 
-                info!("Finished processing mdump/release smoothly!");
+                info!(processed, failures, "Finished processing mdump/release");
                 return Ok(());
             }
         }
 
+        error!(path = %path.display(), "No mdump/release entry found in archive");
         bail!("No release found in archive");
     }
 }
