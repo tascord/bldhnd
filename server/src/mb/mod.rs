@@ -75,47 +75,71 @@ impl MusicBrainz {
     async fn fetch_release(&self) -> anyhow::Result<()> {
         let latest = self.latest.read().map(|e| String::from_iter(*e)).map_err(|e| anyhow!("{e:?}"))?;
         let path = working().join(format!("mb_release_{}.tar.xz", latest));
-
-        info!(latest = %latest, path = %path.display(), "Checking for cached release archive");
-
-        if path.exists() {
-            info!(path = %path.display(), "Release archive already cached");
-            return Ok(());
-        }
-
-        let mut file = OpenOptions::new().create_new(true).write(true).open(&path).await?;
-
         let url = format!("https://data.metabrainz.org/pub/musicbrainz/data/json-dumps/{}/release.tar.xz", latest);
-        info!(%url, "Fetching MusicBrainz release archive");
 
-        let res = reqwest::get(&url).await?.error_for_status()?;
-        let size = res.content_length().unwrap_or(0) as usize;
+        let client = reqwest::Client::new();
 
-        if size > 0 {
-            info!(total_size = size, "Response content length reported");
-        } else {
-            info!("Response content length unknown");
-        }
+        let head = client.head(&url).send().await?.error_for_status()?;
+        let expected_size = head.content_length();
 
-        let mut stream = res.bytes_stream();
-        let mut downloaded = 0;
+        let mut existing_size = if path.exists() { tokio::fs::metadata(&path).await?.len() } else { 0 };
 
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            file.write_all(&chunk).await?;
-
-            downloaded += chunk.len();
-            if size > 0 {
-                let progress = downloaded as f64 / size as f64 * 100.0;
-                info!(downloaded, total_size = size, progress = %format!("{progress:.2}%"), "Download progress");
-            } else {
-                debug!(downloaded, "Downloaded bytes so far");
+        if existing_size > 0 {
+            match expected_size {
+                Some(expected) if existing_size >= expected => {
+                    info!(path = %path.display(), "Release archive already fully downloaded");
+                    return Ok(());
+                }
+                Some(expected) => info!(existing_size, expected, "Resuming partial download"),
+                None => info!(existing_size, "Partial file found, server didn't report size; resuming anyway"),
             }
         }
 
-        info!(path = %path.display(), downloaded = downloaded, "Download complete");
-        file.flush().await?;
+        info!(%url, "Fetching MusicBrainz release archive");
 
+        let mut req = client.get(&url);
+        if existing_size > 0 {
+            req = req.header(reqwest::header::RANGE, format!("bytes={}-", existing_size));
+        }
+        let res = req.send().await?.error_for_status()?;
+
+        let resuming = existing_size > 0 && res.status() == reqwest::StatusCode::PARTIAL_CONTENT;
+        if existing_size > 0 && !resuming {
+            warn!("Server did not honor range request, restarting download from scratch");
+            existing_size = 0;
+        }
+
+        let total_size = expected_size.unwrap_or(0) as usize;
+
+        let file = if resuming {
+            OpenOptions::new().write(true).append(true).open(&path).await?
+        } else {
+            OpenOptions::new().create(true).write(true).truncate(true).open(&path).await?
+        };
+        let mut writer = tokio::io::BufWriter::new(file);
+
+        let mut stream = res.bytes_stream();
+        let mut downloaded = existing_size as usize;
+        let mut last_log = std::time::Instant::now();
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            writer.write_all(&chunk).await?;
+            downloaded += chunk.len();
+
+            if last_log.elapsed() >= std::time::Duration::from_secs(1) {
+                last_log = std::time::Instant::now();
+                if total_size > 0 {
+                    let progress = downloaded as f64 / total_size as f64 * 100.0;
+                    info!(downloaded, total_size, progress = %format!("{progress:.2}%"), "Download progress");
+                } else {
+                    debug!(downloaded, "Downloaded bytes so far");
+                }
+            }
+        }
+
+        writer.flush().await?;
+        info!(path = %path.display(), downloaded = downloaded, "Download complete");
         Ok(())
     }
 
