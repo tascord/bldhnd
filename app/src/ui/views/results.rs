@@ -106,7 +106,7 @@ impl ResultsView {
         });
 
         let items = items.into_iter().map(SearchItem::new);
-        let this = Self { banner: text.lines().map(|l| l.to_string()).collect::<Vec<_>>(), scroller: Scroller::new(items).into(), _subs: sub };
+        let this = Self { banner: text.lines().map(|l| l.to_string()).collect::<Vec<_>>(), scroller: Scroller::new().items(items).into(), _subs: sub };
 
         this.scroller.focus();
         this

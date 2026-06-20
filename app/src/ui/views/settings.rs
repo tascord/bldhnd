@@ -1,20 +1,30 @@
-use std::sync::Arc;
-
-use crate::{config, events::{SubscriptionHandle, SubscriptionPriority}, ui::components::{Focusable, InputEvent, input::Input, scroll::Scroller}};
-
 use {
-    crate::ui::views::home::BANNER_FONT,
+    crate::{
+        config,
+        events::{SubscriptionHandle, SubscriptionPriority},
+        ui::{
+            components::{
+                Focusable, InputEvent,
+                button::Button,
+                input::Input,
+                scroll::{self, ScrollText, Scroller},
+            },
+            views::home::BANNER_FONT,
+        },
+    },
     ratatui::{
         layout::Constraint,
         prelude::*,
         widgets::{Paragraph, WidgetRef},
     },
+    std::sync::Arc,
+    tracing::warn,
 };
 
 pub struct SettingsView {
     banner: Vec<String>,
     scroller: Arc<Scroller>,
-    _subs: Vec<SubscriptionHandle<InputEvent<String>>>,
+    _subs: (Vec<SubscriptionHandle<InputEvent<()>>>, ()),
 }
 
 #[allow(clippy::new_without_default)]
@@ -26,48 +36,21 @@ impl SettingsView {
         let c = config();
         let c = c.read().unwrap();
 
-        let (subs, inputs): (Vec<SubscriptionHandle<InputEvent<String>>>, Vec<Input>) = vec![{
-                let i = Input::new("MusicBrainz API Key", c.key_mb.clone());
-                (i.on(SubscriptionPriority::Low, |ev| {
-                    if let InputEvent::Submit(ev) = (**ev).clone() {
-                        let c = config();
-                        let mut c = c.write().unwrap();
+        let mut subs = (Vec::new(), ());
+        let scroller = Scroller::new();
 
-                        c.key_mb = ev;
-                        c.commit();
-                    }
-                }), i)
-            },
+        let c = config().read().unwrap().clone();
+        scroller.item_ref(ScrollText::new(format!("Volumes ({}): ", c.volumes.len())));
 
-            {
-                let i = Input::new("TVDB API Key", c.key_mb.clone());
-                (i.on(SubscriptionPriority::Low, |ev| {
-                    if let InputEvent::Submit(ev) = (**ev).clone() {
-                        let c = config();
-                        let mut c = c.write().unwrap();
+        let b = Button::new("Add New");
+        subs.0.push(b.on(SubscriptionPriority::Low, |ev| if let InputEvent::Submit(_) = (**ev).clone() {
+            warn!("zzz");
+        }));
 
-                        c.key_tv = ev;
-                        c.commit();
-                    }
-                }), i)
-            },
+        scroller.item_ref(b);
 
-            {
-                let i = Input::new("TMDB API Key", c.key_mb.clone());
-                (i.on(SubscriptionPriority::Low, |ev| {
-                    if let InputEvent::Submit(ev) = (**ev).clone() {
-                        let c = config();
-                        let mut c = c.write().unwrap();
-
-                        c.key_tm = ev;
-                        c.commit();
-                    }
-                }), i)
-            }
-        ].into_iter().unzip();
-
-
-        let this = Self { banner: text.lines().map(|l| l.to_string()).collect::<Vec<_>>(), _subs: subs, scroller: Scroller::new(inputs).into() };
+        let this =
+            Self { banner: text.lines().map(|l| l.to_string()).collect::<Vec<_>>(), _subs: subs, scroller: scroller.into() };
 
         this.scroller.focus();
         this
@@ -91,11 +74,13 @@ impl WidgetRef for SettingsView {
         // Rule
         Paragraph::new(Text::from_iter([
             Line::raw(""),
-            Line::styled(std::iter::repeat_n(' ', layout[1].width as usize).collect::<String>(), Style::new().add_modifier(Modifier::CROSSED_OUT)),
+            Line::styled(
+                std::iter::repeat_n(' ', layout[1].width as usize).collect::<String>(),
+                Style::new().add_modifier(Modifier::CROSSED_OUT),
+            ),
             Line::raw(""),
         ]))
         .render(layout[1], buf);
-
 
         // Library
         self.scroller.render_ref(layout[2], buf);

@@ -45,8 +45,8 @@ impl Cursor {
     fn extend(self, pos: usize) -> Self { Self { caret: pos, anchor: self.anchor } }
 }
 
-const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const SPINNER_INTERVAL_MS: u128 = 80;
+const SPINNER_FRAMES: [&str; 4] = ["◜", "◝", "◞", "◟"];
+const SPINNER_INTERVAL_MS: u128 = 30;
 
 pub struct Input {
     focused: Arc<AtomicBool>,
@@ -308,7 +308,7 @@ impl WidgetRef for Input {
 
         if is_loading {
             let visible_len = win_hi - win_lo;
-            let pad = avail.saturating_sub(visible_len);
+            let pad = avail.saturating_sub(visible_len + 2);
             if pad > 0 {
                 spans.push(Span::raw(" ".repeat(pad)));
             }

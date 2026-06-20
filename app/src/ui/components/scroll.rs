@@ -1,18 +1,23 @@
-use std::{
-    ops::Deref, sync::{
-        Arc, RwLock, atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst}
-    }
-};
-
-use crossterm::event::{KeyCode, KeyModifiers};
-use ratatui::{
-    prelude::*,
-    widgets::{Paragraph, WidgetRef},
-};
-
-use crate::{
-    events::{EventTarget, SubscriptionHandle, SubscriptionPriority},
-    ui::{components::{Focusable, InputEvent}, views::{ModelEvent, model}},
+use {
+    crate::{
+        events::{EventTarget, SubscriptionHandle, SubscriptionPriority},
+        ui::{
+            components::{Focusable, InputEvent},
+            views::{ModelEvent, model},
+        },
+    },
+    crossterm::event::{KeyCode, KeyModifiers},
+    ratatui::{
+        prelude::*,
+        widgets::{Paragraph, WidgetRef},
+    },
+    std::{
+        ops::Deref,
+        sync::{
+            Arc, RwLock,
+            atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
+        },
+    },
 };
 
 pub trait ScrollItem: WidgetRef + Focusable {
@@ -23,38 +28,30 @@ pub trait ScrollItem: WidgetRef + Focusable {
 #[derive(Clone)]
 pub struct ScrollText<'a>(Text<'a>, Arc<AtomicBool>);
 impl Focusable for ScrollText<'_> {
-    fn focus(&self) {
-        self.1.store(true, SeqCst);
-    }
+    fn focus(&self) { self.1.store(true, SeqCst); }
 
-    fn blur(&self) {
-        self.1.store(false, SeqCst);
-    }
+    fn blur(&self) { self.1.store(false, SeqCst); }
 }
 
 impl WidgetRef for ScrollText<'_> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        Paragraph::new(self.0.clone()).style(match self.1.load(SeqCst) {
-            true => Style::new().on_white().black(),
-            false => Style::new(),
-        }).render(area, buf);
+        Paragraph::new(self.0.clone())
+            .style(match self.1.load(SeqCst) {
+                true => Style::new().on_white().black(),
+                false => Style::new(),
+            })
+            .render(area, buf);
     }
 }
 
 impl ScrollItem for ScrollText<'_> {
-    fn height(&self) -> u16 {
-        self.0.height() as u16
-    }
+    fn height(&self) -> u16 { self.0.height() as u16 }
 
-    fn width(&self) -> u16 {
-        self.0.width() as u16
-    }
+    fn width(&self) -> u16 { self.0.width() as u16 }
 }
 
 impl<'a> ScrollText<'a> {
-    pub fn new(d: impl Into<Text<'a>>) -> Self {
-        Self(d.into(), AtomicBool::new(false).into())
-    }
+    pub fn new(d: impl Into<Text<'a>>) -> Self { Self(d.into(), AtomicBool::new(false).into()) }
 }
 
 pub struct Scroller {
@@ -69,17 +66,15 @@ pub struct Scroller {
 impl Deref for Scroller {
     type Target = EventTarget<InputEvent<usize>>;
 
-    fn deref(&self) -> &Self::Target {
-        &self.ev
-    }
+    fn deref(&self) -> &Self::Target { &self.ev }
 }
 
 impl Scroller {
-    pub fn new<T>(items: impl IntoIterator<Item = T>) -> Self where T: ScrollItem + Sync + Send + 'static {
+    pub fn new() -> Self {
         let mut this = Self {
             selected: AtomicUsize::new(0).into(),
             scroll: AtomicUsize::new(0).into(),
-            items: Arc::new(RwLock::new(items.into_iter().map(|i| Box::new(i) as Box<dyn ScrollItem + Sync + Send + 'static>).collect())),
+            items: Default::default(),
             ev: EventTarget::new(),
             focused: AtomicBool::new(false).into(),
             subs: None,
@@ -143,13 +138,16 @@ impl Scroller {
                         _ => return,
                     }
 
-                    
                     ev.cancel();
-                    if let Some(it) = items.get(prev) && focused.load(SeqCst){
+                    if let Some(it) = items.get(prev)
+                        && focused.load(SeqCst)
+                    {
                         it.blur();
                     }
 
-                    if let Some(it) = items.get(selected.load(SeqCst)) && focused.load(SeqCst){
+                    if let Some(it) = items.get(selected.load(SeqCst))
+                        && focused.load(SeqCst)
+                    {
                         it.focus();
                     }
                 }
@@ -158,6 +156,32 @@ impl Scroller {
 
         this.subs = Some([sub]);
         this
+    }
+
+    pub fn item(self, i: impl ScrollItem + Sync + Send + 'static) -> Self {
+        self.item_ref(i);
+        self
+    }
+
+    pub fn items<T>(self, i: impl IntoIterator<Item = T>) -> Self
+    where
+        T: ScrollItem + Sync + Send + 'static,
+    {
+        self.items_ref(i);
+        self
+    }
+
+    pub fn item_ref(&self, i: impl ScrollItem + Sync + Send + 'static) {
+        self.items.write().unwrap().push(Box::new(i) as Box<dyn ScrollItem + Sync + Send + 'static>);
+    }
+
+    pub fn items_ref<T>(&self, i: impl IntoIterator<Item = T>)
+    where
+        T: ScrollItem + Sync + Send + 'static,
+    {
+        let i: Vec<Box<dyn ScrollItem + Send + Sync>> =
+            i.into_iter().map(|i| Box::new(i) as Box<dyn ScrollItem + Sync + Send + 'static>).collect();
+        self.items.write().unwrap().extend(i);
     }
 
     fn clamp_scroll(&self, area_height: usize) {
@@ -197,7 +221,6 @@ impl Scroller {
     }
 }
 
-
 impl Focusable for Scroller {
     fn focus(&self) {
         self.focused.store(true, SeqCst);
@@ -236,16 +259,7 @@ impl WidgetRef for Scroller {
                 break;
             }
 
-            item
-                .render_ref(
-                    Rect {
-                        x: area.x,
-                        y,
-                        width: area.width,
-                        height: item_h as u16,
-                    },
-                    buf,
-                );
+            item.render_ref(Rect { x: area.x, y, width: area.width, height: item_h as u16 }, buf);
 
             y += item_h as u16;
             used_rows += item_h;

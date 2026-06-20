@@ -5,7 +5,7 @@ use {
     futures::StreamExt,
     redb::{Database, ReadableTable, TableDefinition},
     std::{
-        path::Path,
+        path::{Path, PathBuf},
         sync::{Arc, LazyLock, RwLock},
     },
     tokio::{
@@ -44,6 +44,11 @@ impl MusicBrainz {
         }
     }
 
+    fn release_path(&self) -> PathBuf {
+        let l = String::from_iter(&*self.latest.read().unwrap());
+        working().join(format!("mb_release_{}.tar.xz", l))
+    }
+
     #[tracing::instrument(skip(self))]
     async fn update_latest(&self) -> anyhow::Result<()> {
         let url = "https://data.metabrainz.org/pub/musicbrainz/data/json-dumps/LATEST";
@@ -74,7 +79,7 @@ impl MusicBrainz {
     #[tracing::instrument(skip(self))]
     async fn fetch_release(&self) -> anyhow::Result<()> {
         let latest = self.latest.read().map(|e| String::from_iter(*e)).map_err(|e| anyhow!("{e:?}"))?;
-        let path = working().join(format!("mb_release_{}.tar.xz", latest));
+        let path = self.release_path();
         let url = format!("https://data.metabrainz.org/pub/musicbrainz/data/json-dumps/{}/release.tar.xz", latest);
 
         let client = reqwest::Client::new();
@@ -145,7 +150,7 @@ impl MusicBrainz {
 
     #[tracing::instrument(skip(self))]
     async fn process_and_ingest(&self) -> anyhow::Result<()> {
-        let path = working().join("release");
+        let path = self.release_path();
         info!(path = %path.display(), "Opening MusicBrainz release archive");
 
         let file = File::open(&path).await?;

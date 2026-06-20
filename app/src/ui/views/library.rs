@@ -23,7 +23,7 @@ impl LibraryView {
         let text = flet.convert("library").unwrap().to_string();
 
         let placeholder_text = std::iter::repeat_n(ScrollText::new(Text::from_iter([Line::raw("foo"), Line::raw("bar")])), 10).collect::<Vec<_>>();
-        let this = Self { banner: text.lines().map(|l| l.to_string()).collect::<Vec<_>>(), scroller: Scroller::new(placeholder_text).into() };
+        let this = Self { banner: text.lines().map(|l| l.to_string()).collect::<Vec<_>>(), scroller: Scroller::new().items(placeholder_text).into() };
 
         this.scroller.focus();
         this

@@ -1,26 +1,23 @@
-use std::{
-    fmt::Display,
-    sync::{
-        Arc, LazyLock, RwLock,
-        atomic::{AtomicU64, Ordering::SeqCst},
+use {
+    ratatui::{
+        prelude::*,
+        style::{Color, Style},
+        widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget, WidgetRef},
     },
-    time::{Duration, Instant},
+    std::{
+        fmt::Display,
+        sync::{
+            Arc, LazyLock, RwLock,
+            atomic::{AtomicU64, Ordering::SeqCst},
+        },
+        time::{Duration, Instant},
+    },
+    tracing::{
+        Level,
+        field::{Field, Visit},
+    },
+    tracing_subscriber::layer::{Context, Layer},
 };
-
-use ratatui::{
-    prelude::*,
-    style::{Color, Style},
-    widgets::{Block, BorderType, Borders, Paragraph, Widget, WidgetRef},
-};
-use tracing::{
-    Level,
-    field::{Field, Visit},
-};
-use tracing_subscriber::layer::{Context, Layer};
-
-/* =========================================================
-   Toast level
-========================================================= */
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToastLevel {
@@ -55,10 +52,6 @@ impl ToastLevel {
     }
 }
 
-/* =========================================================
-   Toast
-========================================================= */
-
 #[derive(Debug, Clone)]
 struct Toast {
     id: u64,
@@ -69,14 +62,8 @@ struct Toast {
 }
 
 impl Toast {
-    fn expired(&self) -> bool {
-        self.created.elapsed() >= self.duration
-    }
+    fn expired(&self) -> bool { self.created.elapsed() >= self.duration }
 }
-
-/* =========================================================
-   Sonner: the toast queue + widget
-========================================================= */
 
 pub struct Sonner {
     queue: RwLock<Vec<Toast>>,
@@ -87,9 +74,7 @@ pub struct Sonner {
 
 static SONNER: LazyLock<Arc<Sonner>> = LazyLock::new(|| Arc::new(Sonner::new(4, 50)));
 
-pub fn sonner() -> Arc<Sonner> {
-    SONNER.clone()
-}
+pub fn sonner() -> Arc<Sonner> { SONNER.clone() }
 
 impl Sonner {
     fn new(max_visible: usize, max_queued: usize) -> Self {
@@ -113,29 +98,17 @@ impl Sonner {
         id
     }
 
-    pub fn info(&self, message: impl Display) -> u64 {
-        self.push(ToastLevel::Info, message)
-    }
+    pub fn info(&self, message: impl Display) -> u64 { self.push(ToastLevel::Info, message) }
 
-    pub fn warn(&self, message: impl Display) -> u64 {
-        self.push(ToastLevel::Warn, message)
-    }
+    pub fn warn(&self, message: impl Display) -> u64 { self.push(ToastLevel::Warn, message) }
 
-    pub fn error(&self, message: impl Display) -> u64 {
-        self.push(ToastLevel::Error, message)
-    }
+    pub fn error(&self, message: impl Display) -> u64 { self.push(ToastLevel::Error, message) }
 
-    pub fn dismiss(&self, id: u64) {
-        self.queue.write().unwrap().retain(|t| t.id != id);
-    }
+    pub fn dismiss(&self, id: u64) { self.queue.write().unwrap().retain(|t| t.id != id); }
 
-    pub fn clear(&self) {
-        self.queue.write().unwrap().clear();
-    }
+    pub fn clear(&self) { self.queue.write().unwrap().clear(); }
 
-    fn gc(&self) {
-        self.queue.write().unwrap().retain(|t| !t.expired());
-    }
+    fn gc(&self) { self.queue.write().unwrap().retain(|t| !t.expired()); }
 }
 
 impl WidgetRef for Sonner {
@@ -148,7 +121,7 @@ impl WidgetRef for Sonner {
 
         let visible: Vec<Toast> = {
             let q = self.queue.read().unwrap();
-            // newest first, capped to max_visible
+
             q.iter().rev().take(self.max_visible).cloned().collect()
         };
 
@@ -157,21 +130,20 @@ impl WidgetRef for Sonner {
         }
 
         let box_width = area.width.min(40);
-        let mut y = area.bottom();
+        let mut y = area.top();
 
-        // Stack bottom-right, growing upward as more toasts are shown.
         for toast in &visible {
             let lines = wrap(&toast.message, box_width.saturating_sub(4) as usize);
-            let height = (lines.len() as u16 + 2).min(area.height); // +2 for the border
+            let height = (lines.len() as u16 + 2).min(area.height);
 
-            if y < area.top() + height {
+            if y + height > area.bottom() {
                 break;
             }
-            y -= height;
 
             let rect = Rect { x: area.right().saturating_sub(box_width), y, width: box_width, height };
             let color = toast.level.color();
 
+            Clear.render(rect, buf);
             Paragraph::new(Text::from_iter(lines.into_iter().map(Line::raw)))
                 .style(Style::new().fg(color))
                 .block(
@@ -179,9 +151,11 @@ impl WidgetRef for Sonner {
                         .borders(Borders::ALL)
                         .border_type(BorderType::Rounded)
                         .border_style(Style::new().fg(color))
-                        .title(format!(" {} ", toast.level.glyph())),
+                        .title(format!("| {} |", toast.level.glyph())),
                 )
                 .render(rect, buf);
+
+            y += height;
         }
     }
 }
@@ -213,24 +187,16 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
-/* =========================================================
-   Tracing integration
-========================================================= */
-
 pub struct SonnerLayer {
     min_level: Level,
 }
 
 impl SonnerLayer {
-    pub fn with_min_level(min_level: Level) -> Self {
-        Self { min_level }
-    }
+    pub fn with_min_level(min_level: Level) -> Self { Self { min_level } }
 }
 
 impl Default for SonnerLayer {
-    fn default() -> Self {
-        Self { min_level: Level::WARN }
-    }
+    fn default() -> Self { Self { min_level: Level::WARN } }
 }
 
 #[derive(Default)]
@@ -257,8 +223,6 @@ where
     fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
         let level = *event.metadata().level();
 
-        // tracing::Level orders ERROR < WARN < INFO < DEBUG < TRACE, so
-        // "at least as severe as min_level" means "<= min_level".
         if level > self.min_level {
             return;
         }
@@ -282,6 +246,5 @@ where
 
 pub fn install_tracing() {
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
     tracing_subscriber::registry().with(SonnerLayer::default()).init();
 }

@@ -1,3 +1,5 @@
+use crate::ui::components::sonner::{self, sonner};
+
 use {
     crate::{
         events::{EventTarget, SubscriptionPriority},
@@ -204,16 +206,12 @@ impl Model {
             l.render(f.area().inner(Margin::new(4, 3)), f.buffer_mut())
         }
 
-        // sonner
-        // let x = Layout::new(Horizontal, [Constraint::Fill(1), Constraint::Length(40.min(f.area().width))])
-            // .split(f.area().inner(Margin::new(3, 4)));
-        // let y = Layout::new(Vertical, [Constraint::Length(5), Constraint::Fill(1)]).split(x[1])[0];
-
-        // Block::new().bg(Color::Cyan).render(y, f.buffer_mut());
         crate::ui::components::sonner::sonner().render_ref(f.area(), f.buffer_mut());
     }
 
     pub fn run(terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+        sonner::install_tracing();
+
         loop {
             // Draw while holding a short-lived read lock, then drop it before polling/input handling.
             let target_clone: EventTarget<ModelEvent>;

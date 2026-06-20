@@ -1,19 +1,21 @@
-use std::{env, fmt::Display, fs::{File, OpenOptions, read_to_string}, io::{Read, Write}, path::{Path, PathBuf}};
-
-use tokio::spawn;
-use zeroize::Zeroizing;
-
-use crate::data::{KnowledgeBase, mb, tm, tv};
-
 use {
+    crate::data::{KnowledgeBase, mb, tm, tv},
     serde::{Deserialize, Serialize},
-    std::sync::{Arc, LazyLock, RwLock},
+    std::{
+        env,
+        fs::{File, OpenOptions},
+        io::{Read, Write},
+        path::Path,
+        sync::{Arc, LazyLock, RwLock},
+    },
+    tokio::spawn,
+    tracing::info,
 };
 
+pub mod data;
 pub mod events;
 pub mod fs;
 pub mod ui;
-pub mod data;
 
 static CONFIG: LazyLock<Arc<RwLock<Config>>> = LazyLock::new(|| Arc::new(RwLock::new(Config::new())));
 pub fn config() -> Arc<RwLock<Config>> { CONFIG.clone() }
@@ -36,23 +38,30 @@ impl Config {
         let mut s = String::new();
         file().read_to_string(&mut s).unwrap();
 
-        if s.is_empty() {
-            Config::default()
-        } else {
-            serde_json::from_str(&s).unwrap()
-        }
+        if s.is_empty() { Config::default() } else { serde_json::from_str(&s).unwrap() }
     }
 
     pub fn commit(&self) {
         let js = serde_json::to_string_pretty(self).unwrap();
         let mut f = file();
 
-        spawn(async { let v = mb(); let _ = v.login().await;});
-        spawn(async { let v = tv(); let _ = v.login().await;});
-        spawn(async { let v = tm(); let _ = v.login().await;});
+        spawn(async {
+            let v = mb();
+            let _ = v.login().await;
+        });
+        spawn(async {
+            let v = tv();
+            let _ = v.login().await;
+        });
+        spawn(async {
+            let v = tm();
+            let _ = v.login().await;
+        });
 
         f.write_all(js.as_bytes()).unwrap();
         f.flush().unwrap();
+
+        info!("Changes saved!")
     }
 }
 
