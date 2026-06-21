@@ -1,4 +1,5 @@
 use {
+    serde::Serialize,
     std::{
         env, fs,
         path::{Path, PathBuf},
@@ -60,5 +61,7 @@ pub fn db() -> PathBuf {
 
 #[allow(async_fn_in_trait)]
 pub trait KnowledgeBase {
+    type Output: Serialize;
     async fn fetch(&self) -> anyhow::Result<()>;
+    async fn search(&self, q: &str, p: usize) -> anyhow::Result<Vec<Self::Output>>;
 }

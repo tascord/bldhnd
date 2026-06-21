@@ -1,18 +1,16 @@
 use {
     crate::{KnowledgeBase, db, mb::ty::MinifiedRelease, working},
     anyhow::{anyhow, bail},
-    async_compression::tokio::bufread::GzipDecoder,
+    async_compression::tokio::bufread::XzDecoder,
     futures::StreamExt,
-    redb::{Database, ReadableTable, TableDefinition},
+    redb::{Database, ReadableDatabase, ReadableTable, TableDefinition},
     std::{
         path::{Path, PathBuf},
         sync::{Arc, LazyLock, RwLock},
     },
-    tokio::{
-        fs::{File, OpenOptions},
-        io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    },
+    tokio::io::{AsyncBufReadExt, BufReader},
     tokio_tar::Archive,
+    tokio_util::io::StreamReader,
     tracing::{debug, error, info, warn},
 };
 
@@ -27,12 +25,103 @@ pub struct MusicBrainz {
 }
 
 impl KnowledgeBase for MusicBrainz {
+    type Output = MinifiedRelease;
+
     async fn fetch(&self) -> anyhow::Result<()> {
         self.update_latest().await?;
-        self.fetch_release().await?;
         self.process_and_ingest().await?;
 
         Ok(())
+    }
+
+    async fn search(&self, q: &str, p: usize) -> anyhow::Result<Vec<Self::Output>> {
+        let tx = self.db.begin_read()?;
+        let idx = tx.open_table(TableDefinition::<String, Vec<String>>::new("indexes"))?;
+        // Helper: simple subsequence-based fuzzy score
+        fn score_candidate(title: &str, q: &str) -> Option<i64> {
+            if q.is_empty() {
+                return Some(0);
+            }
+            let t = title.to_lowercase();
+            let q = q.to_lowercase();
+            if let Some(pos) = t.find(&q) {
+                return Some((1000i64 - pos as i64).max(1));
+            }
+
+            let t_chars: Vec<char> = t.chars().collect();
+            let q_chars: Vec<char> = q.chars().collect();
+
+            let mut qi = 0usize;
+            let mut first = None;
+            let mut last = 0usize;
+
+            for (i, &c) in t_chars.iter().enumerate() {
+                if qi < q_chars.len() && c == q_chars[qi] {
+                    if first.is_none() {
+                        first = Some(i);
+                    }
+                    last = i;
+                    qi += 1;
+                }
+            }
+
+            if qi == q_chars.len() {
+                let first = first.unwrap_or(0);
+                let span = (last - first) as i64 + 1;
+                let score = 500i64 + (qi as i64 * 10) - span;
+                return Some(score.max(1));
+            }
+
+            None
+        }
+
+        match (idx.first()?, idx.last()?) {
+            (Some((lk, _)), Some((rk, _))) => {
+                // `lk` and `rk` are access guards for keys; clone their inner Strings for bounds
+                let lkey = lk.value().clone();
+                let rkey = rk.value().clone();
+                let range = idx.range(lkey..=rkey)?;
+                let mut scored: Vec<(i64, String)> = Vec::new();
+
+                // open releases table for lookups
+                let releases = tx.open_table(TableDefinition::<String, String>::new("releases"))?;
+
+                for item in range {
+                    let (k, v) = item?; // access guards for key and value
+                    let title = k.value();
+                    let ids = v.value();
+                    if let Some(s) = score_candidate(&title, q) {
+                        // each id for this title inherits the same score
+                        for id in ids {
+                            scored.push((s, id));
+                        }
+                    }
+                }
+
+                // sort by score desc
+                scored.sort_by_key(|b| std::cmp::Reverse(b.0));
+
+                let offset = 50usize.saturating_mul(p);
+                let selection = scored.into_iter().skip(offset).take(50);
+
+                let mut out = Vec::new();
+                for (_score, id) in selection {
+                    if let Some(val) = releases.get(&id)? {
+                        let s = val.value();
+                        match serde_json::from_str::<MinifiedRelease>(&s) {
+                            Ok(min) => out.push(min),
+                            Err(e) => {
+                                warn!(error = %e, id = %id, "failed to deserialize release json");
+                                continue;
+                            }
+                        }
+                    }
+                }
+
+                Ok(out)
+            }
+            _ => Ok(Vec::new()),
+        }
     }
 }
 
@@ -42,11 +131,6 @@ impl MusicBrainz {
             latest: Arc::new(RwLock::new(['\0'; 16])),
             db: Database::create(db().join("mb.db")).expect("Failed to create MusicBrain db"),
         }
-    }
-
-    fn release_path(&self) -> PathBuf {
-        let l = String::from_iter(&*self.latest.read().unwrap());
-        working().join(format!("mb_release_{}.tar.xz", l))
     }
 
     #[tracing::instrument(skip(self))]
@@ -77,86 +161,20 @@ impl MusicBrainz {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn fetch_release(&self) -> anyhow::Result<()> {
+    async fn process_and_ingest(&self) -> anyhow::Result<()> {
         let latest = self.latest.read().map(|e| String::from_iter(*e)).map_err(|e| anyhow!("{e:?}"))?;
-        let path = self.release_path();
         let url = format!("https://data.metabrainz.org/pub/musicbrainz/data/json-dumps/{}/release.tar.xz", latest);
+        info!(%url, "Streaming MusicBrainz release archive");
 
         let client = reqwest::Client::new();
+        let res = client.get(&url).send().await?.error_for_status()?;
 
-        let head = client.head(&url).send().await?.error_for_status()?;
-        let expected_size = head.content_length();
+        // Convert the response byte stream into an AsyncRead for the archive reader
+        let byte_stream = res.bytes_stream().map(|b| b.map_err(std::io::Error::other));
+        let stream_reader = StreamReader::new(byte_stream);
+        let buf = BufReader::new(stream_reader);
 
-        let mut existing_size = if path.exists() { tokio::fs::metadata(&path).await?.len() } else { 0 };
-
-        if existing_size > 0 {
-            match expected_size {
-                Some(expected) if existing_size >= expected => {
-                    info!(path = %path.display(), "Release archive already fully downloaded");
-                    return Ok(());
-                }
-                Some(expected) => info!(existing_size, expected, "Resuming partial download"),
-                None => info!(existing_size, "Partial file found, server didn't report size; resuming anyway"),
-            }
-        }
-
-        info!(%url, "Fetching MusicBrainz release archive");
-
-        let mut req = client.get(&url);
-        if existing_size > 0 {
-            req = req.header(reqwest::header::RANGE, format!("bytes={}-", existing_size));
-        }
-        let res = req.send().await?.error_for_status()?;
-
-        let resuming = existing_size > 0 && res.status() == reqwest::StatusCode::PARTIAL_CONTENT;
-        if existing_size > 0 && !resuming {
-            warn!("Server did not honor range request, restarting download from scratch");
-            existing_size = 0;
-        }
-
-        let total_size = expected_size.unwrap_or(0) as usize;
-
-        let file = if resuming {
-            OpenOptions::new().write(true).append(true).open(&path).await?
-        } else {
-            OpenOptions::new().create(true).write(true).truncate(true).open(&path).await?
-        };
-        let mut writer = tokio::io::BufWriter::new(file);
-
-        let mut stream = res.bytes_stream();
-        let mut downloaded = existing_size as usize;
-        let mut last_log = std::time::Instant::now();
-
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            writer.write_all(&chunk).await?;
-            downloaded += chunk.len();
-
-            if last_log.elapsed() >= std::time::Duration::from_secs(1) {
-                last_log = std::time::Instant::now();
-                if total_size > 0 {
-                    let progress = downloaded as f64 / total_size as f64 * 100.0;
-                    info!(downloaded, total_size, progress = %format!("{progress:.2}%"), "Download progress");
-                } else {
-                    debug!(downloaded, "Downloaded bytes so far");
-                }
-            }
-        }
-
-        writer.flush().await?;
-        info!(path = %path.display(), downloaded = downloaded, "Download complete");
-        Ok(())
-    }
-
-    #[tracing::instrument(skip(self))]
-    async fn process_and_ingest(&self) -> anyhow::Result<()> {
-        let path = self.release_path();
-        info!(path = %path.display(), "Opening MusicBrainz release archive");
-
-        let file = File::open(&path).await?;
-        let reader = BufReader::new(file);
-
-        let decoder = GzipDecoder::new(reader);
+        let decoder = XzDecoder::new(buf);
         let mut archive = Archive::new(decoder);
 
         let mut entries = archive.entries()?;
@@ -169,12 +187,14 @@ impl MusicBrainz {
 
             debug!(entry_path = %entry_path.display(), "Inspecting archive entry");
 
-            if entry_path == Path::new("mdump/release") {
+            if entry_path == Path::new("mbdump/release") {
                 info!(entry_path = %entry_path.display(), "Found mdump/release, starting line-by-line processing");
 
                 let mut line_reader = BufReader::new(entry).lines();
 
-                while let Some(line) = line_reader.next_line().await? {
+                while let Some(ref line) = line_reader.next_line().await? {
+                    let line = line.to_string();
+
                     let tx = self.db.begin_write()?;
                     let mut t_data = tx.open_table(TableDefinition::<String, String>::new("releases"))?;
                     let mut t_idx = tx.open_table(TableDefinition::<String, Vec<String>>::new("indexes"))?;
@@ -195,14 +215,20 @@ impl MusicBrainz {
                             warn!(error = %e, line = %line, "Failed to parse release item");
                         }
                     }
+
+                    if processed.is_multiple_of(100) {
+                        info!("Processed >{} items...", processed);
+                    }
                 }
 
                 info!(processed, failures, "Finished processing mdump/release");
                 return Ok(());
+            } else {
+                warn!(path=%entry_path.display(), "Skipping other file in dump");
             }
         }
 
-        error!(path = %path.display(), "No mdump/release entry found in archive");
+        error!(release = %latest, "No mdump/release entry found in archive");
         bail!("No release found in archive");
     }
 }
