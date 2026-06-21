@@ -34,7 +34,7 @@ impl KnowledgeBase for MusicBrainz {
         Ok(())
     }
 
-    async fn search(&self, q: &str, p: usize) -> anyhow::Result<Vec<Self::Output>> {
+    fn search(&self, q: &str, p: usize) -> anyhow::Result<Vec<Self::Output>> {
         let tx = self.db.begin_read()?;
         let idx = tx.open_table(MusicBrainz::indexes_table_def())?;
         // Helper: simple subsequence-based fuzzy score
@@ -123,8 +123,23 @@ impl KnowledgeBase for MusicBrainz {
             _ => Ok(Vec::new()),
         }
     }
+
+    fn stats(&self) -> anyhow::Result<usize> {
+        let idx = self.db.begin_read()?.open_table(MusicBrainz::indexes_table_def())?;
+        match (idx.first()?, idx.last()?) {
+            (Some((lk, _)), Some((rk, _))) => {
+                let lkey = lk.value().clone();
+                let rkey = rk.value().clone();
+                let range = idx.range(lkey..=rkey)?;
+
+                Ok(range.count())
+            }
+            _ => Ok(0),
+        }
+    }
 }
 
+#[allow(clippy::new_without_default)]
 impl MusicBrainz {
     pub fn new() -> Self {
         Self {
