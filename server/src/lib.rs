@@ -20,7 +20,15 @@ pub mod tm;
 pub mod tv;
 
 pub fn working() -> PathBuf {
-    let p = Path::new(&env::home_dir().expect("No home dir")).join(".bldhnd/").join("cache/");
+    // Prefer XDG cache dir, then BLDHND_DIR, then default to ~/.bldhnd
+    let p = if let Ok(x) = env::var("XDG_CACHE_HOME") {
+        PathBuf::from(x).join("bldhnd").join("cache")
+    } else if let Ok(b) = env::var("BLDHND_DIR") {
+        PathBuf::from(b).join("cache")
+    } else {
+        Path::new(&env::home_dir().expect("No home dir")).join(".bldhnd/").join("cache/")
+    };
+
     if !p.exists() {
         fs::create_dir_all(&p).expect("Failed to create 'working' folder.");
     }
@@ -29,16 +37,32 @@ pub fn working() -> PathBuf {
 }
 
 pub fn logs() -> PathBuf {
-    let p = Path::new(&env::home_dir().expect("No home dir")).join(".bldhnd/").join("logs/");
+    // Prefer XDG state dir, then BLDHND_DIR, then default to ~/.bldhnd
+    let p = if let Ok(s) = env::var("XDG_STATE_HOME") {
+        PathBuf::from(s).join("bldhnd").join("logs")
+    } else if let Ok(b) = env::var("BLDHND_DIR") {
+        PathBuf::from(b).join("logs")
+    } else {
+        Path::new(&env::home_dir().expect("No home dir")).join(".bldhnd/").join("logs/")
+    };
+
     if !p.exists() {
-        fs::create_dir_all(&p).expect("Failed to create 'working' folder.");
+        fs::create_dir_all(&p).expect("Failed to create 'logs' folder.");
     }
 
     p
 }
 
 pub fn db() -> PathBuf {
-    let p = Path::new(&env::home_dir().expect("No home dir")).join(".bldhnd/").join("dbs/");
+    // Use BLDHND_DIR or XDG_DATA_HOME (as bldhnd subdir) or default to ~/.bldhnd
+    let p = if let Ok(b) = env::var("BLDHND_DIR") {
+        PathBuf::from(b).join("dbs")
+    } else if let Ok(x) = env::var("XDG_DATA_HOME") {
+        PathBuf::from(x).join("bldhnd").join("dbs")
+    } else {
+        Path::new(&env::home_dir().expect("No home dir")).join(".bldhnd/").join("dbs/")
+    };
+
     if !p.exists() {
         fs::create_dir_all(&p).expect("Failed to create 'db' folder.");
     }

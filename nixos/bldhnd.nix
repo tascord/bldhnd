@@ -29,6 +29,11 @@ in
         ExecStart = "${execPath}/bin/server";
         Restart = "on-failure";
         User = config.services.bldhnd.user;
+        # Use systemd's StateDirectory to create/own /var/lib/bldhnd and make
+        # it available to the service. Also export BLDHND_DIR so the server
+        # uses the system path instead of ~/.bldhnd on NixOS.
+        StateDirectory = "bldhnd";
+        Environment = "BLDHND_DIR=/var/lib/bldhnd";
       };
     };
   };
