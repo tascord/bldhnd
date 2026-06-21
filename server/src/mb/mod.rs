@@ -142,10 +142,10 @@ impl KnowledgeBase for MusicBrainz {
 #[allow(clippy::new_without_default)]
 impl MusicBrainz {
     pub fn new() -> Self {
-        Self {
-            latest: Arc::new(RwLock::new(['\0'; 16])),
-            db: Database::create(db().join("mb.db")).expect("Failed to create MusicBrain db"),
-        }
+        let mut db = Database::create(db().join("mb.db")).expect("Failed to create MusicBrain db");
+        db.compact().expect("Failed to compact mb db");
+
+        Self { latest: Arc::new(RwLock::new(['\0'; 16])), db }
     }
 
     /// Centralized table definitions so callers don't repeat literal names/types.
