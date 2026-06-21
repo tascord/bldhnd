@@ -1,11 +1,11 @@
 use {
-    crate::{KnowledgeBase, db, mb::ty::MinifiedRelease, working},
+    crate::{KnowledgeBase, db, mb::ty::MinifiedRelease},
     anyhow::{anyhow, bail},
     async_compression::tokio::bufread::XzDecoder,
     futures::StreamExt,
     redb::{Database, ReadableDatabase, ReadableTable, TableDefinition},
     std::{
-        path::{Path, PathBuf},
+        path::Path,
         sync::{Arc, LazyLock, RwLock},
     },
     tokio::io::{AsyncBufReadExt, BufReader},
@@ -36,7 +36,7 @@ impl KnowledgeBase for MusicBrainz {
 
     async fn search(&self, q: &str, p: usize) -> anyhow::Result<Vec<Self::Output>> {
         let tx = self.db.begin_read()?;
-        let idx = tx.open_table(TableDefinition::<String, Vec<String>>::new("indexes"))?;
+        let idx = tx.open_table(MusicBrainz::indexes_table_def())?;
         // Helper: simple subsequence-based fuzzy score
         fn score_candidate(title: &str, q: &str) -> Option<i64> {
             if q.is_empty() {
@@ -84,7 +84,7 @@ impl KnowledgeBase for MusicBrainz {
                 let mut scored: Vec<(i64, String)> = Vec::new();
 
                 // open releases table for lookups
-                let releases = tx.open_table(TableDefinition::<String, String>::new("releases"))?;
+                let releases = tx.open_table(MusicBrainz::releases_table_def())?;
 
                 for item in range {
                     let (k, v) = item?; // access guards for key and value
@@ -131,6 +131,15 @@ impl MusicBrainz {
             latest: Arc::new(RwLock::new(['\0'; 16])),
             db: Database::create(db().join("mb.db")).expect("Failed to create MusicBrain db"),
         }
+    }
+
+    /// Centralized table definitions so callers don't repeat literal names/types.
+    pub fn releases_table_def<'a>() -> TableDefinition<'a, String, String> {
+        TableDefinition::<String, String>::new("releases")
+    }
+
+    pub fn indexes_table_def<'a>() -> TableDefinition<'a, String, Vec<String>> {
+        TableDefinition::<String, Vec<String>>::new("indexes")
     }
 
     #[tracing::instrument(skip(self))]
@@ -192,33 +201,52 @@ impl MusicBrainz {
 
                 let mut line_reader = BufReader::new(entry).lines();
 
-                while let Some(ref line) = line_reader.next_line().await? {
-                    let line = line.to_string();
+                // Read lines into async batches, then open a write transaction per batch.
+                loop {
+                    // collect up to 1000 lines (awaiting here is safe)
+                    let mut batch_lines: Vec<String> = Vec::with_capacity(1000);
+                    for _ in 0..1000 {
+                        match line_reader.next_line().await? {
+                            Some(l) => batch_lines.push(l),
+                            None => break,
+                        }
+                    }
 
+                    if batch_lines.is_empty() {
+                        break;
+                    }
+
+                    // process the batch synchronously (no .await) while holding DB guards
                     let tx = self.db.begin_write()?;
-                    let mut t_data = tx.open_table(TableDefinition::<String, String>::new("releases"))?;
-                    let mut t_idx = tx.open_table(TableDefinition::<String, Vec<String>>::new("indexes"))?;
+                    let mut t_data = tx.open_table(MusicBrainz::releases_table_def())?;
+                    let mut t_idx = tx.open_table(MusicBrainz::indexes_table_def())?;
 
-                    match serde_json::from_str::<ty::Root>(&line).map(MinifiedRelease::from) {
-                        Ok(it) => {
-                            t_data.insert(it.id.clone(), line.to_string())?;
+                    for line in batch_lines {
+                        match serde_json::from_str::<ty::Root>(&line).map(MinifiedRelease::from) {
+                            Ok(it) => {
+                                t_data.insert(it.id.clone(), serde_json::to_string(&it).unwrap())?;
 
-                            t_idx.insert(it.title.clone(), {
-                                let mut v = t_idx.get(it.title).ok().flatten().map(|v| v.value()).unwrap_or_default();
-                                v.push(it.id);
-                                v
-                            })?;
-                            processed += 1;
-                        }
-                        Err(e) => {
-                            failures += 1;
-                            warn!(error = %e, line = %line, "Failed to parse release item");
+                                t_idx.insert(it.title.clone(), {
+                                    let mut v = t_idx.get(it.title).ok().flatten().map(|v| v.value()).unwrap_or_default();
+                                    v.push(it.id);
+                                    v
+                                })?;
+
+                                processed += 1;
+                            }
+                            Err(e) => {
+                                failures += 1;
+                                warn!(error = %e, line = %line, "Failed to parse release item");
+                            }
                         }
                     }
 
-                    if processed.is_multiple_of(100) {
-                        info!("Processed >{} items...", processed);
-                    }
+                    drop(t_data);
+                    drop(t_idx);
+
+                    tx.commit()?;
+
+                    info!("Processed {} items", processed);
                 }
 
                 info!(processed, failures, "Finished processing mdump/release");
