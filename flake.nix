@@ -12,7 +12,7 @@
   {
     packages.${system} = {
       cli = pkgs.rustPlatform.buildRustPackage {
-        pname = "bldhnd-cli";
+        pname = "bldhnd";
         version = "0.1.0";
         src = ./app;
         cargoLock = { lockFile = ./Cargo.lock; };
@@ -26,7 +26,7 @@
       };
 
       server = pkgs.rustPlatform.buildRustPackage {
-        pname = "bldhnd-server";
+        pname = "bh-server";
         version = "0.1.0";
         src = ./server;
         cargoLock = { lockFile = ./Cargo.lock; };
