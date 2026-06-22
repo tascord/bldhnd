@@ -3,43 +3,51 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    crane = {
+      url = "github:ipetkov/crane?ref=v0.23.4";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs }: let
+  outputs = { self, nixpkgs, crane }: let
     system = "x86_64-linux";
     pkgs = import nixpkgs { inherit system; };
+    craneLib = crane.mkLib pkgs;
+    # Use the full workspace as the source so non-Cargo files
+    # (e.g. the `_assets` directory) are available during the build.
+    src = ./.;
+    commonArgs = {
+      pname = "bldhnd-workspace";
+      version = "0.1.0";
+      inherit src;
+      strictDeps = true;
+    };
+    cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+
+    cli = craneLib.buildPackage (commonArgs // {
+      inherit cargoArtifacts;
+      pname = "bldhnd";
+      cargoExtraArgs = "-p bldhnd";
+      doCheck = false;
+    });
+
+    server = craneLib.buildPackage (commonArgs // {
+      inherit cargoArtifacts;
+      pname = "bh-server";
+      cargoExtraArgs = "-p bh-server";
+      doCheck = false;
+    });
   in
   {
     packages.${system} = {
-      cli = pkgs.rustPlatform.buildRustPackage {
-        pname = "bldhnd";
-        version = "0.1.0";
-        src = ./app;
-        cargoLock = { lockFile = ./Cargo.lock; };
-        # Ensure the workspace Cargo.lock is present in the crate source so
-        # cargoSetup hooks can validate without requiring a manual copy.
-        patchPhase = ''
-          if [ -f ${./Cargo.lock} ]; then
-            cp ${./Cargo.lock} "$sourceRoot/Cargo.lock" || true
-          fi
-        '';
-      };
-
-      server = pkgs.rustPlatform.buildRustPackage {
-        pname = "bh-server";
-        version = "0.1.0";
-        src = ./server;
-        cargoLock = { lockFile = ./Cargo.lock; };
-        # Copy workspace Cargo.lock into the server crate so builds succeed
-        # when building the crate in isolation.
-        patchPhase = ''
-          if [ -f ${./Cargo.lock} ]; then
-            cp ${./Cargo.lock} "$sourceRoot/Cargo.lock" || true
-          fi
-        '';
-      };
+      inherit cli server;
+      default = cli;
     };
 
-    nixosModules.bldhnd = import ./nixos/bldhnd.nix;
+    checks.${system} = {
+      inherit cli server;
+    };
+
+    nixosModules.bldhnd = args: import ./nixos/bldhnd.nix ({ inherit self; } // args);
   };
 }

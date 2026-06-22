@@ -1,7 +1,12 @@
-{ config, pkgs, lib, ... }:
+{ self ? null, config, pkgs, lib, ... }:
 
 let
-  serverPkg = pkgs.callPackage ../server {};
+  flakePackages = if self != null && self ? packages then self.packages else {};
+  hasFlakeServer = builtins.hasAttr pkgs.system flakePackages && builtins.hasAttr "server" flakePackages.${pkgs.system};
+  serverPkg =
+    if hasFlakeServer
+    then flakePackages.${pkgs.system}.server
+    else null;
   execPath = if config.services.bldhnd.package != null then config.services.bldhnd.package else serverPkg;
 in
 {
@@ -9,9 +14,9 @@ in
     services.bldhnd = {
       enable = lib.mkEnableOption "bldhnd server";
       package = lib.mkOption {
-        type = lib.types.nullOr lib.types.path;
+        type = lib.types.nullOr lib.types.package;
         default = null;
-        description = "Path to a prebuilt package to run for the server. If null the flake-built server package is used.";
+        description = "Package to run for the server. If null the flake-built server package is used.";
       };
       user = lib.mkOption {
         type = lib.types.str;
@@ -22,11 +27,18 @@ in
   };
 
   config = lib.mkIf config.services.bldhnd.enable {
+    assertions = [
+      {
+        assertion = execPath != null;
+        message = "services.bldhnd.package must be set when the flake-built server package is unavailable for ${pkgs.system}.";
+      }
+    ];
+
     systemd.services.bldhnd-server = {
       description = "bldhnd server";
       wantedBy = [ "multi-user.target" ];
       serviceConfig = {
-        ExecStart = "${execPath}/bin/server";
+        ExecStart = "${execPath}/bin/bh-server";
         Restart = "on-failure";
         User = config.services.bldhnd.user;
         StateDirectory = "bldhnd";
