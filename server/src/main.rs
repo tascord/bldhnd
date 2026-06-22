@@ -1,5 +1,5 @@
 use {
-    bh_server::{mb::ty::MinifiedRelease, *},
+    bh_server::{mb::ty::MinifiedRelease, wikidata::ty::WikiDataItem, *},
     milrouter::*,
     reqwest::header::HeaderMap,
     serde_json::json,
@@ -80,6 +80,11 @@ async fn main() -> anyhow::Result<()> {
         let _ = c.fetch().await.inspect_err(|e| warn!("{e:?}"));
     });
 
+    spawn(async {
+        let c = wikidata::client();
+        let _ = c.fetch().await.inspect_err(|e| warn!("{e:?}"));
+    });
+
     serve(Router::route).await
 }
 
@@ -87,16 +92,22 @@ async fn main() -> anyhow::Result<()> {
 async fn music(q: (String, usize)) -> anyhow::Result<Vec<MinifiedRelease>> { mb::client().search(&q.0, q.1) }
 
 #[endpoint(auth = auth)]
+async fn media(q: (String, usize)) -> anyhow::Result<Vec<WikiDataItem>> { wikidata::client().search(&q.0, q.1) }
+
+#[endpoint(auth = auth)]
 async fn stats() -> anyhow::Result<serde_json::Value> {
     let mb = mb::client().stats()?;
+    let wd = wikidata::client().stats()?;
 
     Ok(json!({
-        "music": mb
+        "music": mb,
+        "media": wd
     }))
 }
 
 #[derive(Router)]
 pub enum Router {
     Music(EndpointMusic),
+    Media(EndpointMedia),
     Stats(EndpointStats)
 }

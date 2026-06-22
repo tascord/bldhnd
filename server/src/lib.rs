@@ -1,5 +1,4 @@
 use {
-    crate::mb::ty::MinifiedRelease,
     milrouter::{
         hyper::{server::conn::http1, service::service_fn},
         hyper_util::rt::TokioIo,
@@ -18,6 +17,7 @@ use {
 pub mod mb;
 pub mod tm;
 pub mod tv;
+pub mod wikidata;
 
 pub fn working() -> PathBuf {
     // Prefer XDG cache dir, then BLDHND_DIR, then default to ~/.bldhnd

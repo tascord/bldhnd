@@ -1,3 +1,1 @@
-pub struct MusicBrainz {
-    
-}
+pub struct TVDB {}
