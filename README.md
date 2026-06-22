@@ -1,6 +1,6 @@
 # bldhnd — Nix flake
 
-This repository includes a small Nix flake that builds a CLI package and a server package, and exposes a NixOS module to run the server as a systemd service.
+This repository includes a small Nix flake that uses Crane to build a CLI package and a server package, and exposes a NixOS module to run the server as a systemd service.
 
 Quick examples
 
@@ -8,14 +8,14 @@ Build the CLI:
 
 ```bash
 nix build .#packages.x86_64-linux.cli
-./result/bin/bldhnd-cli
+./result/bin/bldhnd
 ```
 
 Build the server and run it locally:
 
 ```bash
 nix build .#packages.x86_64-linux.server
-./result/bin/server &
+./result/bin/bh-server &
 ```
 
 Enable as a NixOS module
