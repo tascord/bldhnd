@@ -1,9 +1,11 @@
 { self ? null, config, pkgs, lib, ... }:
 
 let
+  flakePackages = if self != null && self ? packages then self.packages else {};
+  hasFlakeServer = builtins.hasAttr pkgs.system flakePackages && builtins.hasAttr "server" flakePackages.${pkgs.system};
   serverPkg =
-    if self != null && self ? packages && builtins.hasAttr pkgs.system self.packages && builtins.hasAttr "server" self.packages.${pkgs.system}
-    then self.packages.${pkgs.system}.server
+    if hasFlakeServer
+    then flakePackages.${pkgs.system}.server
     else null;
   execPath = if config.services.bldhnd.package != null then config.services.bldhnd.package else serverPkg;
 in
