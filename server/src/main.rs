@@ -106,8 +106,14 @@ async fn stats() -> anyhow::Result<serde_json::Value> {
 }
 
 #[derive(Router)]
+#[assets(../../_assets)]
+#[html(notice)]
 pub enum Router {
     Music(EndpointMusic),
     Media(EndpointMedia),
     Stats(EndpointStats)
+}
+
+pub fn notice() -> String {
+    include_str!("../../CREDITS.md").to_string()
 }
