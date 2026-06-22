@@ -1,0 +1,312 @@
+use {
+    crate::{KnowledgeBase, db, wikidata::ty::WikiDataItem},
+    redb::{Database, ReadableDatabase, ReadableTable, TableDefinition},
+    std::sync::{Arc, LazyLock},
+    tracing::{info, warn},
+};
+
+pub mod ty;
+
+static CLIENT: LazyLock<Arc<WikiData>> = LazyLock::new(|| Arc::new(WikiData::new()));
+pub fn client() -> Arc<WikiData> { CLIENT.clone() }
+
+/// Number of items requested per SPARQL page.
+///
+/// WikiData's public endpoint (Blazegraph) handles GROUP BY aggregation over
+/// multi-valued properties (genres, formats) comfortably at this size while
+/// staying well within the 60-second query timeout.  Adjust down if you
+/// consistently see timeout errors, or up (to ~10 000) on a dedicated mirror.
+const BATCH_SIZE: usize = 5_000;
+const SPARQL_ENDPOINT: &str = "https://query.wikidata.org/sparql";
+
+pub struct WikiData {
+    db: Database,
+}
+
+/// Fuzzy-score `title` against query `q`.
+///
+/// Returns `None` if `title` contains no subsequence match for `q`.
+/// Higher scores indicate a better match; substring matches beat subsequence
+/// matches, and earlier/tighter spans beat later/looser ones.
+fn score_candidate(title: &str, q: &str) -> Option<i64> {
+    if q.is_empty() {
+        return Some(0);
+    }
+    let t = title.to_lowercase();
+    let q = q.to_lowercase();
+    if let Some(pos) = t.find(&q) {
+        return Some((1_000i64 - pos as i64).max(1));
+    }
+
+    let t_chars: Vec<char> = t.chars().collect();
+    let q_chars: Vec<char> = q.chars().collect();
+    let mut qi = 0usize;
+    let mut first = None;
+    let mut last = 0usize;
+
+    for (i, &c) in t_chars.iter().enumerate() {
+        if qi < q_chars.len() && c == q_chars[qi] {
+            if first.is_none() {
+                first = Some(i);
+            }
+            last = i;
+            qi += 1;
+        }
+    }
+
+    if qi == q_chars.len() {
+        let first = first.unwrap_or(0);
+        let span = (last - first) as i64 + 1;
+        return Some((500i64 + (qi as i64 * 10) - span).max(1));
+    }
+
+    None
+}
+
+impl KnowledgeBase for WikiData {
+    type Output = WikiDataItem;
+
+    async fn fetch(&self) -> anyhow::Result<()> {
+        // Q11424  = film
+        // Q5398426 = television series
+        self.fetch_media_type("Q11424", "film").await?;
+        self.fetch_media_type("Q5398426", "tv").await?;
+        Ok(())
+    }
+
+    fn search(&self, q: &str, p: usize) -> anyhow::Result<Vec<Self::Output>> {
+        let tx = self.db.begin_read()?;
+        let idx = tx.open_table(WikiData::indexes_table_def())?;
+
+        match (idx.first()?, idx.last()?) {
+            (Some((lk, _)), Some((rk, _))) => {
+                let lkey = lk.value().clone();
+                let rkey = rk.value().clone();
+                let range = idx.range(lkey..=rkey)?;
+                let mut scored: Vec<(i64, String)> = Vec::new();
+
+                let items = tx.open_table(WikiData::items_table_def())?;
+
+                for entry in range {
+                    let (k, v) = entry?;
+                    let title = k.value();
+                    let ids = v.value();
+                    if let Some(s) = score_candidate(&title, q) {
+                        for id in ids {
+                            scored.push((s, id));
+                        }
+                    }
+                }
+
+                scored.sort_by_key(|b| std::cmp::Reverse(b.0));
+
+                let offset = 50usize.saturating_mul(p);
+                let mut out = Vec::new();
+
+                for (_score, id) in scored.into_iter().skip(offset).take(50) {
+                    if let Some(val) = items.get(&id)? {
+                        let s = val.value();
+                        match serde_json::from_str::<WikiDataItem>(&s) {
+                            Ok(item) => out.push(item),
+                            Err(e) => {
+                                warn!(error = %e, %id, "failed to deserialize wikidata item");
+                            }
+                        }
+                    }
+                }
+
+                Ok(out)
+            }
+            _ => Ok(Vec::new()),
+        }
+    }
+
+    fn stats(&self) -> anyhow::Result<usize> {
+        let idx = self.db.begin_read()?.open_table(WikiData::indexes_table_def())?;
+        match (idx.first()?, idx.last()?) {
+            (Some((lk, _)), Some((rk, _))) => {
+                let lkey = lk.value().clone();
+                let rkey = rk.value().clone();
+                Ok(idx.range(lkey..=rkey)?.count())
+            }
+            _ => Ok(0),
+        }
+    }
+}
+
+#[allow(clippy::new_without_default)]
+impl WikiData {
+    pub fn new() -> Self {
+        let db_path = db().join("wikidata.db");
+        let mut db = Database::create(&db_path)
+            .unwrap_or_else(|e| panic!("Failed to create WikiData db at {}: {e} (check disk space and permissions)", db_path.display()));
+        db.compact().expect("Failed to compact WikiData db");
+        Self { db }
+    }
+
+    /// Primary-key table: QID → JSON-serialised `WikiDataItem`.
+    pub fn items_table_def<'a>() -> TableDefinition<'a, String, String> {
+        TableDefinition::<String, String>::new("items")
+    }
+
+    /// Inverted-index table: lowercase title → Vec<QID>.
+    pub fn indexes_table_def<'a>() -> TableDefinition<'a, String, Vec<String>> {
+        TableDefinition::<String, Vec<String>>::new("indexes")
+    }
+
+    /// Scrape all entities of a given WikiData instance type (`type_qid`, e.g.
+    /// `"Q11424"`) in paginated SPARQL batches, then ingest them into the local
+    /// redb database.
+    #[tracing::instrument(skip(self), fields(%type_qid, %media_type))]
+    async fn fetch_media_type(&self, type_qid: &str, media_type: &str) -> anyhow::Result<()> {
+        let http = reqwest::Client::builder()
+            .user_agent("bh-server/0.1 (https://github.com/tascord/bldhnd; knowledge-base bot)")
+            .build()?;
+
+        let mut offset = 0usize;
+        let mut total_processed = 0usize;
+        let mut total_skipped = 0usize;
+
+        info!("Starting WikiData scrape");
+
+        loop {
+            let query = build_sparql_query(type_qid, BATCH_SIZE, offset);
+
+            info!(%offset, "Querying WikiData SPARQL endpoint");
+
+            let resp = http
+                .get(SPARQL_ENDPOINT)
+                .query(&[("query", query.as_str()), ("format", "json")])
+                .header(reqwest::header::ACCEPT, "application/sparql-results+json")
+                .send()
+                .await?
+                .error_for_status()?
+                .json::<ty::SparqlResponse>()
+                .await?;
+
+            let bindings = resp.results.bindings;
+            let batch_len = bindings.len();
+
+            if batch_len == 0 {
+                break;
+            }
+
+            // ── Write batch into redb ─────────────────────────────────────
+            let tx = self.db.begin_write()?;
+            {
+                let mut t_items = tx.open_table(WikiData::items_table_def())?;
+                let mut t_idx = tx.open_table(WikiData::indexes_table_def())?;
+
+                for binding in bindings {
+                    // Extract QID from the full URI, e.g.
+                    // "http://www.wikidata.org/entity/Q134773" → "Q134773"
+                    let uri = &binding.item.value;
+                    let id = uri.rsplit('/').next().unwrap_or(uri).to_string();
+
+                    let title = match binding.item_label {
+                        Some(ref lbl) if !lbl.value.is_empty() && lbl.value != id => {
+                            lbl.value.clone()
+                        }
+                        _ => {
+                            // No English label – skip; a QID-only title is not useful
+                            total_skipped += 1;
+                            continue;
+                        }
+                    };
+
+                    let release_date = binding.release_date.and_then(|v| {
+                        // XSD datetime "1999-03-31T00:00:00Z" → "1999-03-31"
+                        let d = v.value.split('T').next().unwrap_or("").to_string();
+                        if d.is_empty() { None } else { Some(d) }
+                    });
+
+                    let genres = split_pipe(binding.genres);
+                    let country = binding.country.map(|v| v.value).filter(|s| !s.is_empty());
+                    let formats = split_pipe(binding.formats);
+
+                    let item = WikiDataItem {
+                        id: id.clone(),
+                        title: title.clone(),
+                        media_type: media_type.to_string(),
+                        release_date,
+                        genres,
+                        country,
+                        formats,
+                    };
+
+                    t_items.insert(id.clone(), serde_json::to_string(&item)?)?;
+
+                    // Update inverted index (title → [id, …])
+                    let mut ids = t_idx.get(&title).ok().flatten().map(|v| v.value()).unwrap_or_default();
+                    ids.push(id);
+                    t_idx.insert(title, ids)?;
+
+                    total_processed += 1;
+                }
+            }
+            tx.commit()?;
+
+            info!(total_processed, total_skipped, %offset, "Committed WikiData batch");
+
+            if batch_len < BATCH_SIZE {
+                // Last (partial) page – done.
+                break;
+            }
+
+            offset += BATCH_SIZE;
+
+            // Brief pause to be polite to WikiData's public endpoint.
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        }
+
+        info!(total_processed, total_skipped, "Finished WikiData scrape");
+        Ok(())
+    }
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Split a `"|"`-delimited GROUP_CONCAT value into a filtered Vec<String>.
+fn split_pipe(v: Option<ty::SparqlValue>) -> Vec<String> {
+    v.map(|sv| sv.value.split('|').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+/// Build a SPARQL SELECT query that fetches one page of `media_type` items.
+///
+/// Uses `GROUP_CONCAT` so that multi-valued properties (genre, format) are
+/// collapsed into one row per item, separated by `|`.
+fn build_sparql_query(type_qid: &str, limit: usize, offset: usize) -> String {
+    format!(
+        r#"
+SELECT ?item ?itemLabel
+       (SAMPLE(STR(?releaseDate)) AS ?releaseDate)
+       (GROUP_CONCAT(DISTINCT ?genreLabel; SEPARATOR="|") AS ?genres)
+       (SAMPLE(?countryLabel) AS ?country)
+       (GROUP_CONCAT(DISTINCT ?formatLabel; SEPARATOR="|") AS ?formats)
+WHERE {{
+  ?item wdt:P31 wd:{type_qid}.
+  OPTIONAL {{ ?item wdt:P577 ?releaseDate. }}
+  OPTIONAL {{
+    ?item wdt:P136 ?genre.
+    ?genre rdfs:label ?genreLabel.
+    FILTER(LANG(?genreLabel) = "en")
+  }}
+  OPTIONAL {{
+    ?item wdt:P495 ?country.
+    ?country rdfs:label ?countryLabel.
+    FILTER(LANG(?countryLabel) = "en")
+  }}
+  OPTIONAL {{
+    ?item wdt:P437 ?format.
+    ?format rdfs:label ?formatLabel.
+    FILTER(LANG(?formatLabel) = "en")
+  }}
+  SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en". }}
+}}
+GROUP BY ?item ?itemLabel
+ORDER BY ?item
+LIMIT {limit} OFFSET {offset}
+"#
+    )
+}
