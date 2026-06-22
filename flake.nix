@@ -48,6 +48,6 @@
       inherit cli server;
     };
 
-    nixosModules.bldhnd = args: import ./nixos/bldhnd.nix ({ inherit self; } // args);
+    nixosModules.bldhnd = import ./nixos/bldhnd.nix;
   };
 }
