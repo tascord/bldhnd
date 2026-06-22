@@ -15,8 +15,6 @@ use {
 };
 
 pub mod mb;
-pub mod tm;
-pub mod tv;
 pub mod wikidata;
 
 pub fn working() -> PathBuf {
