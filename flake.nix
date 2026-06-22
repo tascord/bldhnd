@@ -13,7 +13,9 @@
     system = "x86_64-linux";
     pkgs = import nixpkgs { inherit system; };
     craneLib = crane.mkLib pkgs;
-    src = craneLib.cleanCargoSource ./.;
+    # Use the full workspace as the source so non-Cargo files
+    # (e.g. the `_assets` directory) are available during the build.
+    src = ./.;
     commonArgs = {
       pname = "bldhnd-workspace";
       version = "0.1.0";
