@@ -1,6 +1,6 @@
 use {
     crate::{
-        data::{KnowledgeBase, mb, tm, tv},
+        data::{SearchResult, data},
         events::{SubscriptionHandle, SubscriptionPriority},
         ui::{
             components::{Focusable, InputEvent, input::Input, radio::Radio},
@@ -75,37 +75,56 @@ impl SearchView {
                 let rs = rs.clone();
                 let inp = inp.clone();
                 let rad = rad.clone();
+                let st = st.clone();
 
                 if let InputEvent::Submit(q) = (**ev).clone() {
-                    let kb = match *st.read().unwrap() {
-                        SearchType::Music => mb() as Arc<dyn KnowledgeBase>,
-                        SearchType::Movie => tm() as Arc<dyn KnowledgeBase>,
-                        SearchType::Series => tv() as Arc<dyn KnowledgeBase>,
-                    };
-
                     inp.blur();
                     rad.blur();
                     inp.load(true);
 
                     spawn(async move {
-                        match kb.search(&q).await {
-                            Ok(r) => {
-                                *rs.write().unwrap() = Some(ResultsView::new(r, {
-                                    let rs = rs.clone();
-                                    move || {
-                                        *rs.write().unwrap() = None;
-                                        inp.focus();
-                                        rad.focus();
-                                        inp.load(false);
-                                    }
-                                }));
-                            }
-                            Err(_) => {
-                                warn!("Failed to fetch data");
-                                inp.focus();
-                                rad.focus();
-                                inp.load(false);
-                            }
+                        let search_type = *st.read().unwrap();
+                        match search_type {
+                            SearchType::Music => match data().music((q, 0)).await {
+                                Ok(v) => {
+                                    *rs.write().unwrap() =
+                                        Some(ResultsView::new(v.into_iter().map(SearchResult::from).collect(), {
+                                            let rs = rs.clone();
+                                            move || {
+                                                *rs.write().unwrap() = None;
+                                                inp.focus();
+                                                rad.focus();
+                                                inp.load(false);
+                                            }
+                                        }))
+                                }
+                                Err(e) => {
+                                    warn!("Failed to search: {e:?}");
+                                    inp.focus();
+                                    rad.focus();
+                                    inp.load(false);
+                                }
+                            },
+                            SearchType::Movie | SearchType::Series => match data().media((q, 0)).await {
+                                Ok(v) => {
+                                    *rs.write().unwrap() =
+                                        Some(ResultsView::new(v.into_iter().map(SearchResult::from).collect(), {
+                                            let rs = rs.clone();
+                                            move || {
+                                                *rs.write().unwrap() = None;
+                                                inp.focus();
+                                                rad.focus();
+                                                inp.load(false);
+                                            }
+                                        }))
+                                }
+                                Err(e) => {
+                                    warn!("Failed to search: {e:?}");
+                                    inp.focus();
+                                    rad.focus();
+                                    inp.load(false);
+                                }
+                            },
                         }
                     });
                 }

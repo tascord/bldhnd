@@ -2,7 +2,7 @@
 
 { 
 
-  packages = [ pkgs.git pkgs.rustup ];
+  packages = [ pkgs.git pkgs.rustup pkgs.openssl ];
 
   languages.rust = {
     enable = true;

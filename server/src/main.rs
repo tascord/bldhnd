@@ -1,15 +1,15 @@
 use {
-    bh_server::{mb::ty::MinifiedRelease, wikidata::ty::WikiDataItem, *},
-    milrouter::*,
-    reqwest::header::HeaderMap,
-    serde_json::json,
-    std::fs::{self, File},
+    bh_server::*,
+    milrouter::serve,
+    std::{
+        env,
+        fs::{self, File},
+        net::SocketAddr,
+    },
     tokio::spawn,
     tracing::{info, warn},
     tracing_subscriber::{Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt},
 };
-
-async fn auth(_: HeaderMap) -> anyhow::Result<()> { Ok(()) }
 
 fn setup_logging() -> anyhow::Result<()> {
     // rotate previous LATEST -> timestamped file
@@ -85,35 +85,10 @@ async fn main() -> anyhow::Result<()> {
         let _ = c.fetch().await.inspect_err(|e| warn!("{e:?}"));
     });
 
-    serve(Router::route).await
-}
+    let sock = SocketAddr::new(
+        "127.0.0.1".parse().unwrap(),
+        env::var("PORT").map(|v| v.parse().expect("Invalid PORT env")).unwrap_or(40000),
+    );
 
-#[endpoint(auth = auth)]
-async fn music(q: (String, usize)) -> anyhow::Result<Vec<MinifiedRelease>> { mb::client().search(&q.0, q.1) }
-
-#[endpoint(auth = auth)]
-async fn media(q: (String, usize)) -> anyhow::Result<Vec<WikiDataItem>> { wikidata::client().search(&q.0, q.1) }
-
-#[endpoint(auth = auth)]
-async fn stats() -> anyhow::Result<serde_json::Value> {
-    let mb = mb::client().stats()?;
-    let wd = wikidata::client().stats()?;
-
-    Ok(json!({
-        "music": mb,
-        "media": wd
-    }))
-}
-
-#[derive(Router)]
-#[assets(../../_assets)]
-#[html(notice)]
-pub enum Router {
-    Music(EndpointMusic),
-    Media(EndpointMedia),
-    Stats(EndpointStats)
-}
-
-pub fn notice() -> String {
-    include_str!("../../CREDITS.md").to_string()
+    serve(sock, Router::route).await
 }

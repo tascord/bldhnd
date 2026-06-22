@@ -1,9 +1,11 @@
 use {
+    crate::{mb::ty::MinifiedRelease, wikidata::ty::WikiDataItem},
     milrouter::{
         hyper::{server::conn::http1, service::service_fn},
         hyper_util::rt::TokioIo,
         *,
     },
+    crate::reqwest::header::HeaderMap,
     serde::Serialize,
     std::{
         env,
@@ -76,28 +78,32 @@ pub trait KnowledgeBase {
     fn stats(&self) -> anyhow::Result<usize>;
 }
 
-pub async fn serve<RouteFut>(route: fn(hyper::Request<hyper::body::Incoming>) -> RouteFut) -> anyhow::Result<()>
-where
-    RouteFut: Future<Output = std::result::Result<hyper::Response<http_body_util::Full<bytes::Bytes>>, std::convert::Infallible>>
-        + Sync
-        + Send
-        + 'static,
-{
-    let addr: std::net::SocketAddr = format!("127.0.0.1:{}", env::var("PORT").unwrap_or("40000".to_string())).parse()?;
-    let listener = TcpListener::bind(addr).await?;
+async fn auth(_: HeaderMap) -> anyhow::Result<()> { Ok(()) }
 
-    info!("Listening on http://{}", addr);
+#[endpoint(auth = auth)]
+async fn music(q: (String, usize)) -> anyhow::Result<Vec<MinifiedRelease>> { mb::client().search(&q.0, q.1) }
 
-    while let Ok((stream, _)) = listener.accept().await {
-        let service = service_fn(route);
-        let io = TokioIo::new(stream);
+#[endpoint(auth = auth)]
+async fn media(q: (String, usize)) -> anyhow::Result<Vec<WikiDataItem>> { wikidata::client().search(&q.0, q.1) }
 
-        spawn(async move {
-            if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
-                warn!("Error serving connection: {:?}", err);
-            }
-        });
-    }
+#[endpoint(auth = auth)]
+async fn stats() -> anyhow::Result<serde_json::Value> {
+    let mb = mb::client().stats()?;
+    let wd = wikidata::client().stats()?;
 
-    Ok(())
+    Ok(serde_json::json!({
+        "music": mb,
+        "media": wd
+    }))
 }
+
+#[derive(Router)]
+#[assets(../../_assets)]
+#[html(notice)]
+pub enum Router {
+    Music(EndpointMusic),
+    Media(EndpointMedia),
+    Stats(EndpointStats),
+}
+
+pub fn notice() -> String { include_str!("../../CREDITS.md").to_string() }

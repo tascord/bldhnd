@@ -3,7 +3,7 @@ use crate::ui::components::sonner::{self, sonner};
 use {
     crate::{
         events::{EventTarget, SubscriptionPriority},
-        ui::views::{home::HomeView, library::LibraryView, search::SearchView, settings::SettingsView},
+        ui::views::{home::HomeView, library::LibraryView, search::SearchView, settings::SettingsView, logs::LogsView},
     },
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
     ratatui::{
@@ -30,6 +30,7 @@ pub mod library;
 pub mod results;
 pub mod search;
 pub mod settings;
+pub mod logs;
 
 static MODEL: LazyLock<Arc<Model>> = LazyLock::new(|| Arc::new(Model::new()));
 
@@ -99,6 +100,7 @@ pub enum ModelView {
     Search(SearchView),
     Library(LibraryView),
     Settings(SettingsView),
+    Logs(LogsView),
 }
 
 impl Default for ModelView {
@@ -112,11 +114,12 @@ impl ModelView {
             ModelView::Search(v) => v.render_ref(area, buf),
             ModelView::Library(v) => v.render_ref(area, buf),
             ModelView::Settings(v) => v.render_ref(area, buf),
+            ModelView::Logs(v) => v.render_ref(area, buf),
         }
     }
 
     pub fn list() -> Vec<(String, usize)> {
-        vec![("Home".to_string(), 1), ("Search".to_string(), 2), ("Library".to_string(), 3), ("Settings".to_string(), 4)]
+        vec![("Home".to_string(), 1), ("Search".to_string(), 2), ("Library".to_string(), 3), ("Settings".to_string(), 4), ("Logs".to_string(), 5)]
     }
 
     pub fn key(k: KeyCode) {
@@ -138,6 +141,9 @@ impl ModelView {
             KeyCode::Char('4') if ex != 4 => {
                 *model().view.lock().unwrap() = Some(ModelView::Settings(SettingsView::new()));
             }
+            KeyCode::Char('5') if ex != 5 => {
+                *model().view.lock().unwrap() = Some(ModelView::Logs(LogsView::new()));
+            }
             _ => {}
         }
     }
@@ -148,6 +154,7 @@ impl ModelView {
             ModelView::Search(_) => 2,
             ModelView::Library(_) => 3,
             ModelView::Settings(_) => 4,
+            ModelView::Logs(_) => 5,
         }
     }
 }
@@ -210,7 +217,7 @@ impl Model {
     }
 
     pub fn run(terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
-        sonner::install_tracing();
+        crate::logs::install_tracing();
 
         loop {
             // Draw while holding a short-lived read lock, then drop it before polling/input handling.

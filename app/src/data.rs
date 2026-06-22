@@ -1,16 +1,15 @@
+use bh_server::{mb::ty::MinifiedRelease, wikidata::ty::WikiDataItem};
+
 use {
-    crate::config,
-    async_trait::async_trait,
+    bh_server::RouterClient,
     chrono::NaiveDate,
     dashmap::DashMap,
-    reqwest::Client,
     std::{
-        fmt::Display,
+        env,
         hash::Hash,
-        sync::{Arc, LazyLock, RwLock},
+        sync::{Arc, LazyLock},
         time::{Duration, Instant},
     },
-    zeroize::Zeroizing,
 };
 
 // =========================================================
@@ -63,228 +62,66 @@ where
     }
 }
 
-// =========================================================
-// Trait
-// =========================================================
+static DATA_CLIENT: LazyLock<Arc<RouterClient>> = LazyLock::new(|| {
+    bh_server::Router::client(
+        env::var("BLDHND_SERVER_URL").unwrap_or("https://bldhnd.fargone.sh".to_string()),
+        Default::default(),
+    )
+    .into()
+});
 
-#[async_trait]
-pub trait KnowledgeBase: Send + Sync {
-    async fn login(&self) -> anyhow::Result<()>;
-    async fn search(&self, q: &str) -> anyhow::Result<Vec<SearchResult>>;
-}
+pub fn data() -> Arc<RouterClient> { DATA_CLIENT.clone() }
 
-// =========================================================
-// MusicBrainz
-// =========================================================
+impl From<MinifiedRelease> for SearchResult {
+    fn from(value: MinifiedRelease) -> Self {
+        // Build display name as "Title — Artist"
+        let name = if value.primary_artist.is_empty() {
+            value.title.clone()
+        } else {
+            format!("{} — {}", value.title, value.primary_artist)
+        };
 
-pub struct MusicBrainz {
-    key: Zeroizing<String>,
-    http: Client,
-    cache: Cache<String, Vec<SearchResult>>,
-}
+        // Parse release date (try common granularities), fallback to 1970-01-01
+        let release = value
+            .release_date
+            .as_deref()
+            .and_then(|s| {
+                chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                    .or_else(|_| chrono::NaiveDate::parse_from_str(s, "%Y-%m"))
+                    .or_else(|_| chrono::NaiveDate::parse_from_str(s, "%Y"))
+                    .ok()
+            })
+            .unwrap_or_else(|| NaiveDate::from_ymd_opt(1970, 1, 1).unwrap());
 
-impl MusicBrainz {
-    pub fn new() -> Self {
-        Self {
-            key: Zeroizing::new(config().read().unwrap().key_mb.clone()),
-            http: Client::new(),
-            cache: Cache::new(Duration::from_secs(60 * 10)),
-        }
+        // Approximate size from track count (assume ~10MB per track)
+        let size_gb = (value.total_tracks as f32) * 0.01;
+
+        SearchResult { name, release, ty: "Music".to_string(), size_gb }
     }
 }
 
-#[async_trait]
-impl KnowledgeBase for MusicBrainz {
-    async fn login(&self) -> anyhow::Result<()> { Ok(()) }
+impl From<WikiDataItem> for SearchResult {
+    fn from(value: WikiDataItem) -> Self {
+        let name = value.title.clone();
 
-    async fn search(&self, q: &str) -> anyhow::Result<Vec<SearchResult>> {
-        let query = q.to_string();
+        let release = value
+            .release_date
+            .as_deref()
+            .and_then(|s| {
+                chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                    .or_else(|_| chrono::NaiveDate::parse_from_str(s, "%Y-%m"))
+                    .or_else(|_| chrono::NaiveDate::parse_from_str(s, "%Y"))
+                    .ok()
+            })
+            .unwrap_or_else(|| NaiveDate::from_ymd_opt(1970, 1, 1).unwrap());
 
-        if let Some(cached) = self.cache.get(&query) {
-            return Ok(cached);
-        }
+        let ty = match value.media_type.as_str() {
+            "film" => "Movie".to_string(),
+            "tv" => "Series".to_string(),
+            other => other.to_string(),
+        };
 
-        let url = format!("https://musicbrainz.org/ws/2/release/?query={}&fmt=json", urlencoding::encode(&query));
-
-        let resp = self
-            .http
-            .get(url)
-            .header("User-Agent", "kb-client/1.0 (contact@example.com)")
-            .send()
-            .await?
-            .json::<serde_json::Value>()
-            .await?;
-
-        let mut results = Vec::new();
-
-        if let Some(releases) = resp["releases"].as_array() {
-            for r in releases {
-                results.push(SearchResult {
-                    name: r["title"].as_str().unwrap_or("").to_string(),
-                    release: NaiveDate::from_ymd_opt(2000, 1, 1).unwrap(),
-                    ty: "Music".into(),
-                    size_gb: 0.0,
-                });
-            }
-        }
-
-        self.cache.insert(query, results.clone());
-        Ok(results)
+        // WikiData items have no size info in the KB; leave as 0.0
+        SearchResult { name, release, ty, size_gb: 0.0 }
     }
 }
-
-// =========================================================
-// TMDB
-// =========================================================
-
-pub struct TMDB {
-    key: Zeroizing<String>,
-    http: Client,
-    cache: Cache<String, Vec<SearchResult>>,
-    token: RwLock<Option<String>>,
-}
-
-impl TMDB {
-    pub fn new() -> Self {
-        Self {
-            key: Zeroizing::new(config().read().unwrap().key_tm.clone()),
-            http: Client::new(),
-            cache: Cache::new(Duration::from_secs(60 * 10)),
-            token: RwLock::new(None),
-        }
-    }
-}
-
-#[async_trait]
-impl KnowledgeBase for TMDB {
-    async fn login(&self) -> anyhow::Result<()> {
-        let url = "https://api.themoviedb.org/3/authentication";
-
-        let resp = self.http.get(url).bearer_auth(self.key.as_str()).send().await?;
-
-        if resp.status().is_success() {
-            *self.token.write().unwrap() = Some(self.key.to_string());
-        }
-
-        Ok(())
-    }
-
-    async fn search(&self, q: &str) -> anyhow::Result<Vec<SearchResult>> {
-        let query = q.to_string();
-
-        if let Some(cached) = self.cache.get(&query) {
-            return Ok(cached);
-        }
-
-        let url = format!("https://api.themoviedb.org/3/search/multi?query={}", urlencoding::encode(&query));
-
-        let resp = self.http.get(url).bearer_auth(self.key.as_str()).send().await?.json::<serde_json::Value>().await?;
-
-        let mut results = Vec::new();
-
-        if let Some(items) = resp["results"].as_array() {
-            for i in items {
-                results.push(SearchResult {
-                    name: i["title"].as_str().or_else(|| i["name"].as_str()).unwrap_or("").to_string(),
-                    release: NaiveDate::from_ymd_opt(2000, 1, 1).unwrap(),
-                    ty: format!("Music | {}", i["media_type"].as_str().unwrap_or("unknown")),
-                    size_gb: 0.0,
-                });
-            }
-        }
-
-        self.cache.insert(query, results.clone());
-        Ok(results)
-    }
-}
-
-// =========================================================
-// TVDB
-// =========================================================
-
-pub struct TVDB {
-    key: Zeroizing<String>,
-    http: Client,
-    cache: Cache<String, Vec<SearchResult>>,
-    token: RwLock<Option<String>>,
-}
-
-impl TVDB {
-    pub fn new() -> Self {
-        Self {
-            key: Zeroizing::new(config().read().unwrap().key_tv.clone()),
-            http: Client::new(),
-            cache: Cache::new(Duration::from_secs(60 * 10)),
-            token: RwLock::new(None),
-        }
-    }
-}
-
-#[async_trait]
-impl KnowledgeBase for TVDB {
-    async fn login(&self) -> anyhow::Result<()> {
-        let url = "https://api4.thetvdb.com/v4/login";
-
-        let resp = self
-            .http
-            .post(url)
-            .json(&serde_json::json!({
-                "apikey": self.key.as_str()
-            }))
-            .send()
-            .await?;
-
-        if resp.status().is_success() {
-            let json: serde_json::Value = resp.json().await?;
-            if let Some(token) = json["data"]["token"].as_str() {
-                *self.token.write().unwrap() = Some(token.to_string());
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn search(&self, q: &str) -> anyhow::Result<Vec<SearchResult>> {
-        let query = q.to_string();
-
-        if let Some(cached) = self.cache.get(&query) {
-            return Ok(cached);
-        }
-
-        let token = self.token.read().unwrap().clone();
-
-        let mut req = self.http.get("https://api4.thetvdb.com/v4/search").query(&[("query", &query)]);
-
-        if let Some(t) = token {
-            req = req.bearer_auth(t);
-        }
-
-        let resp = req.send().await?.json::<serde_json::Value>().await?;
-
-        let mut results = Vec::new();
-
-        if let Some(items) = resp["data"].as_array() {
-            for i in items {
-                results.push(SearchResult {
-                    name: i["name"].as_str().unwrap_or("").to_string(),
-                    release: NaiveDate::from_ymd_opt(2000, 1, 1).unwrap(),
-                    ty: "TV".into(),
-                    size_gb: 0.0,
-                });
-            }
-        }
-
-        self.cache.insert(query, results.clone());
-        Ok(results)
-    }
-}
-
-static MB_CLIENT: LazyLock<Arc<MusicBrainz>> = LazyLock::new(|| Arc::new(MusicBrainz::new()));
-static TM_CLIENT: LazyLock<Arc<TMDB>> = LazyLock::new(|| Arc::new(TMDB::new()));
-static TV_CLIENT: LazyLock<Arc<TVDB>> = LazyLock::new(|| Arc::new(TVDB::new()));
-
-pub fn mb() -> Arc<MusicBrainz> { MB_CLIENT.clone() }
-
-pub fn tm() -> Arc<TMDB> { TM_CLIENT.clone() }
-
-pub fn tv() -> Arc<TVDB> { TV_CLIENT.clone() }

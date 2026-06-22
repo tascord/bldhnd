@@ -183,12 +183,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bh-server",
  "chrono",
  "crossterm",
  "dashmap",
  "figlet-rs",
  "futures",
  "futures-signals",
+ "milrouter",
  "rand 0.10.1",
  "ratatui",
  "reqwest 0.13.4",
@@ -1566,9 +1568,9 @@ dependencies = [
 
 [[package]]
 name = "milrouter"
-version = "0.3.1"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c4eb7c9a13a170d9fa0e7cfae2329e1c05f42c9e83856fb1e084fb68f892f66"
+checksum = "fd45723583d55845937b78893d0554a114b2b33801409d3be02d05a8859be2a9"
 dependencies = [
  "anyhow",
  "async_fn_traits",
@@ -1594,9 +1596,9 @@ dependencies = [
 
 [[package]]
 name = "milrouter_macros"
-version = "0.3.1"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5435affa7d258135c085c87dc0d3214c42ebc2c611c18caf03fa9ef5f35b786"
+checksum = "5047fca307a869a933877b2af4856fd129eba877d071e061ec16a23b93c8d62a"
 dependencies = [
  "anyhow",
  "heck",

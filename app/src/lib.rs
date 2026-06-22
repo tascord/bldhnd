@@ -1,5 +1,4 @@
 use {
-    crate::data::{KnowledgeBase, mb, tm, tv},
     serde::{Deserialize, Serialize},
     std::{
         env,
@@ -8,7 +7,6 @@ use {
         path::Path,
         sync::{Arc, LazyLock, RwLock},
     },
-    tokio::spawn,
     tracing::info,
 };
 
@@ -16,6 +14,7 @@ pub mod data;
 pub mod events;
 pub mod fs;
 pub mod ui;
+pub mod logs;
 
 static CONFIG: LazyLock<Arc<RwLock<Config>>> = LazyLock::new(|| Arc::new(RwLock::new(Config::new())));
 pub fn config() -> Arc<RwLock<Config>> { CONFIG.clone() }
@@ -28,9 +27,6 @@ pub fn file() -> File {
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct Config {
     pub volumes: Vec<Volume>,
-    pub key_mb: String,
-    pub key_tm: String,
-    pub key_tv: String,
 }
 
 impl Config {
@@ -44,19 +40,6 @@ impl Config {
     pub fn commit(&self) {
         let js = serde_json::to_string_pretty(self).unwrap();
         let mut f = file();
-
-        spawn(async {
-            let v = mb();
-            let _ = v.login().await;
-        });
-        spawn(async {
-            let v = tv();
-            let _ = v.login().await;
-        });
-        spawn(async {
-            let v = tm();
-            let _ = v.login().await;
-        });
 
         f.write_all(js.as_bytes()).unwrap();
         f.flush().unwrap();
