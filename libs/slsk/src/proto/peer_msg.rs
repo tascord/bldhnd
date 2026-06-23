@@ -13,8 +13,8 @@
 //!   → Offset(0)                    — resume offset
 //!   ← [raw bytes]                  — file data stream
 
-use crate::error::{Result};
 use super::frame::MsgReader;
+use crate::error::Result;
 use tracing::{debug, warn};
 
 // ---------------------------------------------------------------------------
@@ -23,23 +23,23 @@ use tracing::{debug, warn};
 
 #[repr(u8)]
 pub enum PeerCode {
-    PierceFirewall   = 0,
-    PeerInit         = 1,
-    SharesRequest    = 4,
-    SharesReply      = 5,
-    SearchRequest    = 8,
-    SearchReply      = 9,
-    InfoRequest      = 15,
-    InfoReply        = 16,
-    FolderContents   = 36,
-    TransferRequest  = 40,
+    PierceFirewall = 0,
+    PeerInit = 1,
+    SharesRequest = 4,
+    SharesReply = 5,
+    SearchRequest = 8,
+    SearchReply = 9,
+    InfoRequest = 15,
+    InfoReply = 16,
+    FolderContents = 36,
+    TransferRequest = 40,
     TransferResponse = 41,
-    UploadPlaceholder= 42,
-    QueueDownload    = 43,
-    PlaceInQueue     = 44,
-    UploadFailed     = 46,
-    QueueFailed      = 50,
-    Offset           = 65,
+    UploadPlaceholder = 42,
+    QueueDownload = 43,
+    PlaceInQueue = 44,
+    UploadFailed = 46,
+    QueueFailed = 50,
+    Offset = 65,
 }
 
 // ---------------------------------------------------------------------------
@@ -49,7 +49,9 @@ pub enum PeerCode {
 #[derive(Debug, Clone)]
 pub enum PeerMsg {
     /// Initial handshake from the remote peer (they are initiating to us).
-    PierceFirewall { token: u32 },
+    PierceFirewall {
+        token: u32,
+    },
     /// Peer identifies itself and the connection type.
     PeerInit {
         username: String,
@@ -72,14 +74,27 @@ pub enum PeerMsg {
         reason: String,
     },
     /// File data offset for resume (always 0 for fresh downloads).
-    Offset { offset: u64 },
+    Offset {
+        offset: u64,
+    },
     /// Place in upload queue.
-    PlaceInQueue { filename: String, place: u32 },
+    PlaceInQueue {
+        filename: String,
+        place: u32,
+    },
     /// Upload failed.
-    UploadFailed { filename: String },
+    UploadFailed {
+        filename: String,
+    },
     /// Queue failed.
-    QueueFailed { filename: String, reason: String },
-    Unknown { code: u8, len: usize },
+    QueueFailed {
+        filename: String,
+        reason: String,
+    },
+    Unknown {
+        code: u8,
+        len: usize,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -93,39 +108,29 @@ pub fn parse_peer_msg(code: u8, payload: &[u8]) -> Result<PeerMsg> {
     match code {
         0 => Ok(PeerMsg::PierceFirewall { token: r.read_u32()? }),
 
-        1 => Ok(PeerMsg::PeerInit {
-            username:  r.read_str()?,
-            conn_type: r.read_str()?,
-            token:     r.read_u32()?,
-        }),
+        1 => Ok(PeerMsg::PeerInit { username: r.read_str()?, conn_type: r.read_str()?, token: r.read_u32()? }),
 
         40 => {
             let direction = r.read_u32()?;
-            let token     = r.read_u32()?;
-            let filename  = r.read_str()?;
-            let filesize  = if direction == 1 { Some(r.read_u64().unwrap_or(0)) } else { None };
+            let token = r.read_u32()?;
+            let filename = r.read_str()?;
+            let filesize = if direction == 1 { Some(r.read_u64().unwrap_or(0)) } else { None };
             Ok(PeerMsg::TransferRequest { direction, token, filename, filesize })
         }
 
         41 => {
-            let token   = r.read_u32()?;
+            let token = r.read_u32()?;
             let allowed = r.read_bool()?;
             let filesize = if allowed { r.read_u64().unwrap_or(0) } else { 0 };
-            let reason   = if !allowed { r.read_str().unwrap_or_default() } else { String::new() };
+            let reason = if !allowed { r.read_str().unwrap_or_default() } else { String::new() };
             Ok(PeerMsg::TransferResponse { token, allowed, filesize, reason })
         }
 
-        44 => Ok(PeerMsg::PlaceInQueue {
-            filename: r.read_str()?,
-            place:    r.read_u32()?,
-        }),
+        44 => Ok(PeerMsg::PlaceInQueue { filename: r.read_str()?, place: r.read_u32()? }),
 
         46 => Ok(PeerMsg::UploadFailed { filename: r.read_str()? }),
 
-        50 => Ok(PeerMsg::QueueFailed {
-            filename: r.read_str()?,
-            reason:   r.read_str()?,
-        }),
+        50 => Ok(PeerMsg::QueueFailed { filename: r.read_str()?, reason: r.read_str()? }),
 
         65 => Ok(PeerMsg::Offset { offset: r.read_u64()? }),
 

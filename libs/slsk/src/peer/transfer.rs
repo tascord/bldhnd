@@ -13,10 +13,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tracing::{debug, info};
 
+use super::conn::PeerConn;
 use crate::error::{Result, SlskError};
 use crate::proto::frame::MsgBuilder;
-use crate::proto::peer_msg::{PeerMsg, PeerCode};
-use super::conn::PeerConn;
+use crate::proto::peer_msg::{PeerCode, PeerMsg};
 
 /// Download progress callback type: `(bytes_done, total_bytes)`.
 pub type ProgressFn = Box<dyn Fn(u64, u64) + Send + 'static>;
@@ -35,7 +35,7 @@ pub async fn download_file(
 ) -> Result<u64> {
     // --- Step 1: send TransferRequest (direction=0 = we want to download) ---
     let req = MsgBuilder::peer(PeerCode::TransferRequest as u8)
-        .u32(0)           // direction: 0 = download
+        .u32(0) // direction: 0 = download
         .u32(token)
         .str(filename)
         .build();
@@ -56,16 +56,12 @@ pub async fn download_file(
             return Err(SlskError::TransferRefused(reason));
         }
         other => {
-            return Err(SlskError::Protocol(format!(
-                "expected TransferResponse, got {other:?}"
-            )));
+            return Err(SlskError::Protocol(format!("expected TransferResponse, got {other:?}")));
         }
     };
 
     // --- Step 3: send Offset (resume position) ---
-    let offset_msg = MsgBuilder::peer(PeerCode::Offset as u8)
-        .u64(resume_offset)
-        .build();
+    let offset_msg = MsgBuilder::peer(PeerCode::Offset as u8).u64(resume_offset).build();
     peer.send_raw(&offset_msg).await?;
     debug!("→ Offset {resume_offset}");
 
@@ -79,9 +75,7 @@ pub async fn download_file(
     }
 
     let mut file = if resume_offset > 0 {
-        tokio::fs::OpenOptions::new()
-            .create(true).append(true)
-            .open(dest).await?
+        tokio::fs::OpenOptions::new().create(true).append(true).open(dest).await?
     } else {
         tokio::fs::File::create(dest).await?
     };
@@ -107,9 +101,7 @@ pub async fn download_file(
         let want = ((remaining_size - received) as usize).min(chunk.len());
         let n = reader.read(&mut chunk[..want]).await?;
         if n == 0 {
-            return Err(SlskError::TransferFailed(format!(
-                "peer disconnected after {received}/{remaining_size} bytes"
-            )));
+            return Err(SlskError::TransferFailed(format!("peer disconnected after {received}/{remaining_size} bytes")));
         }
         file.write_all(&chunk[..n]).await?;
         received += n as u64;

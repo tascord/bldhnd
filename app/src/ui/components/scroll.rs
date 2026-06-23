@@ -28,9 +28,13 @@ pub trait ScrollItem: WidgetRef + Focusable {
 #[derive(Clone)]
 pub struct ScrollText<'a>(Text<'a>, Arc<AtomicBool>);
 impl Focusable for ScrollText<'_> {
-    fn focus(&self) { self.1.store(true, SeqCst); }
+    fn focus(&self) {
+        self.1.store(true, SeqCst);
+    }
 
-    fn blur(&self) { self.1.store(false, SeqCst); }
+    fn blur(&self) {
+        self.1.store(false, SeqCst);
+    }
 }
 
 impl WidgetRef for ScrollText<'_> {
@@ -45,13 +49,19 @@ impl WidgetRef for ScrollText<'_> {
 }
 
 impl ScrollItem for ScrollText<'_> {
-    fn height(&self) -> u16 { self.0.height() as u16 }
+    fn height(&self) -> u16 {
+        self.0.height() as u16
+    }
 
-    fn width(&self) -> u16 { self.0.width() as u16 }
+    fn width(&self) -> u16 {
+        self.0.width() as u16
+    }
 }
 
 impl<'a> ScrollText<'a> {
-    pub fn new(d: impl Into<Text<'a>>) -> Self { Self(d.into(), AtomicBool::new(false).into()) }
+    pub fn new(d: impl Into<Text<'a>>) -> Self {
+        Self(d.into(), AtomicBool::new(false).into())
+    }
 }
 
 pub struct Scroller {
@@ -66,7 +76,9 @@ pub struct Scroller {
 impl Deref for Scroller {
     type Target = EventTarget<InputEvent<usize>>;
 
-    fn deref(&self) -> &Self::Target { &self.ev }
+    fn deref(&self) -> &Self::Target {
+        &self.ev
+    }
 }
 
 #[allow(clippy::new_without_default)]

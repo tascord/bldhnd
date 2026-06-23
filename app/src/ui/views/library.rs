@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use crate::ui::components::{Focusable, scroll::{ScrollText, Scroller}};
+use crate::ui::components::{
+    Focusable,
+    scroll::{ScrollText, Scroller},
+};
 
 use {
     crate::ui::views::home::BANNER_FONT,
@@ -13,7 +16,7 @@ use {
 
 pub struct LibraryView {
     banner: Vec<String>,
-    scroller: Arc<Scroller>
+    scroller: Arc<Scroller>,
 }
 
 #[allow(clippy::new_without_default)]
@@ -22,8 +25,13 @@ impl LibraryView {
         let flet = figlet_rs::FIGlet::from_content(BANNER_FONT).unwrap();
         let text = flet.convert("library").unwrap().to_string();
 
-        let placeholder_text = std::iter::repeat_n(ScrollText::new(Text::from_iter([Line::raw("foo"), Line::raw("bar")])), 10).collect::<Vec<_>>();
-        let this = Self { banner: text.lines().map(|l| l.to_string()).collect::<Vec<_>>(), scroller: Scroller::new().items(placeholder_text).into() };
+        let placeholder_text =
+            std::iter::repeat_n(ScrollText::new(Text::from_iter([Line::raw("foo"), Line::raw("bar")])), 10)
+                .collect::<Vec<_>>();
+        let this = Self {
+            banner: text.lines().map(|l| l.to_string()).collect::<Vec<_>>(),
+            scroller: Scroller::new().items(placeholder_text).into(),
+        };
 
         this.scroller.focus();
         this
@@ -47,11 +55,13 @@ impl WidgetRef for LibraryView {
         // Rule
         Paragraph::new(Text::from_iter([
             Line::raw(""),
-            Line::styled(std::iter::repeat_n(' ', layout[1].width as usize).collect::<String>(), Style::new().add_modifier(Modifier::CROSSED_OUT)),
+            Line::styled(
+                std::iter::repeat_n(' ', layout[1].width as usize).collect::<String>(),
+                Style::new().add_modifier(Modifier::CROSSED_OUT),
+            ),
             Line::raw(""),
         ]))
         .render(layout[1], buf);
-
 
         // Library
         self.scroller.render_ref(layout[2], buf);

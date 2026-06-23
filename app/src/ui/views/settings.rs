@@ -42,8 +42,10 @@ impl SettingsView {
         scroller.item_ref(ScrollText::new(format!("Volumes ({}): ", c.volumes.len())));
 
         let b = Button::new("Add New");
-        subs.0.push(b.on(SubscriptionPriority::Low, |ev| if let InputEvent::Submit(_) = (**ev).clone() {
-            warn!("zzz");
+        subs.0.push(b.on(SubscriptionPriority::Low, |ev| {
+            if let InputEvent::Submit(_) = (**ev).clone() {
+                warn!("zzz");
+            }
         }));
 
         scroller.item_ref(b);

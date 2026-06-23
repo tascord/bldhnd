@@ -1,10 +1,10 @@
+pub mod button;
 pub mod input;
+pub mod modal;
 pub mod radio;
 pub mod rainbow;
 pub mod scroll;
 pub mod sonner;
-pub mod button;
-pub mod modal;
 
 #[derive(Debug, Clone)]
 pub enum InputEvent<V> {

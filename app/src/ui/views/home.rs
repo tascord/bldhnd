@@ -1,8 +1,5 @@
 use {
-    crate::ui::{
-        components::rainbow::Rainbow,
-        views::vstack,
-    },
+    crate::ui::{components::rainbow::Rainbow, views::vstack},
     rand::RngExt,
     ratatui::{
         layout::{Constraint, HorizontalAlignment::Center},
@@ -40,9 +37,8 @@ impl WidgetRef for HomeView {
     where
         Self: Sized,
     {
-        let text = self
-            .grad
-            .apply(&Text::from(self.banner.0.iter().map(|l| Line::from(Span::raw(l.clone()))).collect::<Vec<_>>()));
+        let text =
+            self.grad.apply(&Text::from(self.banner.0.iter().map(|l| Line::from(Span::raw(l.clone()))).collect::<Vec<_>>()));
 
         let w = text.width();
         let h = text.height();

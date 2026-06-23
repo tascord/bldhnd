@@ -1,6 +1,6 @@
-use crate::ui::components::scroll::Scroller;
-use crate::ui::components::Focusable;
 use crate::logs;
+use crate::ui::components::Focusable;
+use crate::ui::components::scroll::Scroller;
 use ratatui::prelude::*;
 use ratatui::widgets::{Paragraph, WidgetRef};
 use std::sync::Arc;
@@ -35,7 +35,10 @@ impl WidgetRef for LogsView {
         // Rule
         Paragraph::new(Text::from_iter([
             Line::raw(""),
-            Line::styled(std::iter::repeat_n(' ', layout[1].width as usize).collect::<String>(), Style::new().add_modifier(Modifier::CROSSED_OUT)),
+            Line::styled(
+                std::iter::repeat_n(' ', layout[1].width as usize).collect::<String>(),
+                Style::new().add_modifier(Modifier::CROSSED_OUT),
+            ),
             Line::raw(""),
         ]))
         .render(layout[1], buf);

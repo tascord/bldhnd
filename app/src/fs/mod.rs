@@ -1,7 +1,15 @@
-use std::{env, fs::create_dir_all, ops::Deref, path::{Path, PathBuf}, sync::{Arc, LazyLock, RwLock, atomic::{AtomicBool, Ordering::SeqCst}}};
+use std::{
+    env,
+    fs::create_dir_all,
+    ops::Deref,
+    path::{Path, PathBuf},
+    sync::{
+        Arc, LazyLock, RwLock,
+        atomic::{AtomicBool, Ordering::SeqCst},
+    },
+};
 
 use crate::{config, events::EventTarget};
-
 
 static LIBRARY: LazyLock<Arc<RwLock<Library>>> = LazyLock::new(|| Arc::new(RwLock::new(Library::new())));
 
@@ -24,18 +32,9 @@ pub enum LibraryEvent {
 
 #[derive(Debug)]
 pub enum File {
-    Movie {
-        title: String,
-        size_gb: f32,
-    },
-    Music {
-        title: String,
-        size_gb: f32,
-    },
-    Series {
-        title: String,
-        size_gb: f32,
-    },
+    Movie { title: String, size_gb: f32 },
+    Music { title: String, size_gb: f32 },
+    Series { title: String, size_gb: f32 },
 }
 
 impl File {
@@ -44,15 +43,17 @@ impl File {
             File::Movie { title, .. } => title,
             File::Music { title, .. } => title,
             File::Series { title, .. } => title,
-        }.to_string()
+        }
+        .to_string()
     }
 
     pub fn ty(&self) -> String {
         match self {
             File::Movie { .. } => "Movie",
             File::Music { .. } => "Music",
-            File::Series {.. } => "Series",
-        }.to_string()
+            File::Series { .. } => "Series",
+        }
+        .to_string()
     }
 
     pub fn size_gb(&self) -> f32 {
@@ -69,7 +70,7 @@ impl File {
 pub struct Library {
     ev: EventTarget<LibraryEvent>,
     files: RwLock<Vec<Arc<File>>>,
-    scanning: AtomicBool
+    scanning: AtomicBool,
 }
 
 impl Deref for Library {
@@ -84,11 +85,7 @@ impl Deref for Library {
 impl Library {
     #[allow(dead_code)]
     pub fn new() -> Self {
-        Self {
-            scanning: AtomicBool::new(false),
-            ev: EventTarget::new(),
-            files: Default::default()
-        }
+        Self { scanning: AtomicBool::new(false), ev: EventTarget::new(), files: Default::default() }
     }
 
     #[allow(dead_code)]
@@ -96,19 +93,18 @@ impl Library {
         let lock = library();
         let lock = lock.write().unwrap();
 
-        if lock.scanning.load(SeqCst) { return };
+        if lock.scanning.load(SeqCst) {
+            return;
+        };
         lock.emit(LibraryEvent::ScanStarted);
 
         std::thread::spawn(|| {
-
             let c = config();
             let c = c.read().unwrap().clone();
 
             for _v in c.volumes {
                 // Scan volume
             }
-
         });
-        
     }
 }

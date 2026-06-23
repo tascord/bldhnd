@@ -8,7 +8,9 @@ use {
 pub mod ty;
 
 static CLIENT: LazyLock<Arc<WikiData>> = LazyLock::new(|| Arc::new(WikiData::new()));
-pub fn client() -> Arc<WikiData> { CLIENT.clone() }
+pub fn client() -> Arc<WikiData> {
+    CLIENT.clone()
+}
 
 /// Number of items requested per SPARQL page.
 ///
@@ -138,8 +140,9 @@ impl KnowledgeBase for WikiData {
 impl WikiData {
     pub fn new() -> Self {
         let db_path = db().join("wikidata.db");
-        let mut db = Database::create(&db_path)
-            .unwrap_or_else(|e| panic!("Failed to create WikiData db at {}: {e} (check disk space and permissions)", db_path.display()));
+        let mut db = Database::create(&db_path).unwrap_or_else(|e| {
+            panic!("Failed to create WikiData db at {}: {e} (check disk space and permissions)", db_path.display())
+        });
         db.compact().expect("Failed to compact WikiData db");
 
         // Ensure tables exist even before we write
@@ -235,9 +238,7 @@ impl WikiData {
                     let id = uri.rsplit('/').next().unwrap_or(uri).to_string();
 
                     let title = match binding.item_label {
-                        Some(ref lbl) if !lbl.value.is_empty() && lbl.value != id => {
-                            lbl.value.clone()
-                        }
+                        Some(ref lbl) if !lbl.value.is_empty() && lbl.value != id => lbl.value.clone(),
                         _ => {
                             // No English label – skip; a QID-only title is not useful
                             total_skipped += 1;
@@ -300,14 +301,19 @@ impl WikiData {
 fn load_wikidata_offset(db: &Database) -> usize {
     let tx = db.begin_read().unwrap();
     let table = tx.open_table(WikiData::checkpoint_table_def()).unwrap();
-    table.get("cursor".to_string()).ok().flatten().map(|v| {
-        let s = v.value();
-        serde_json::from_str::<serde_json::Value>(&s)
-            .ok()
-            .and_then(|v| v.get("offset").and_then(|v| v.as_u64()))
-            .map(|n| n as usize)
-            .unwrap_or(0)
-    }).unwrap_or(0)
+    table
+        .get("cursor".to_string())
+        .ok()
+        .flatten()
+        .map(|v| {
+            let s = v.value();
+            serde_json::from_str::<serde_json::Value>(&s)
+                .ok()
+                .and_then(|v| v.get("offset").and_then(|v| v.as_u64()))
+                .map(|n| n as usize)
+                .unwrap_or(0)
+        })
+        .unwrap_or(0)
 }
 
 fn save_wikidata_offset(db: &Database, offset: usize) {

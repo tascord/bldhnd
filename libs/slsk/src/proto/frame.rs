@@ -7,8 +7,8 @@
 //! Strings:  [u32le byte_len][utf-8 bytes]
 //! Integers: u32 little-endian unless noted
 
+use crate::error::{Result, SlskError};
 use bytes::{Buf, BufMut, BytesMut};
-use crate::error::{SlskError, Result};
 
 // ---------------------------------------------------------------------------
 // MsgBuilder
@@ -110,14 +110,10 @@ impl<'a> MsgReader<'a> {
     pub fn read_str(&mut self) -> Result<String> {
         let len = self.read_u32()? as usize;
         if self.buf.len() < len {
-            return Err(SlskError::Protocol(format!(
-                "unexpected EOF reading string (need {len}, have {})",
-                self.buf.len()
-            )));
+            return Err(SlskError::Protocol(format!("unexpected EOF reading string (need {len}, have {})", self.buf.len())));
         }
-        let s = std::str::from_utf8(&self.buf[..len])
-            .map_err(|e| SlskError::Protocol(format!("invalid utf8: {e}")))?
-            .to_owned();
+        let s =
+            std::str::from_utf8(&self.buf[..len]).map_err(|e| SlskError::Protocol(format!("invalid utf8: {e}")))?.to_owned();
         self.buf.advance(len);
         Ok(s)
     }

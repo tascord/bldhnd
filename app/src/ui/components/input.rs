@@ -30,19 +30,31 @@ struct Cursor {
 }
 
 impl Cursor {
-    fn point(pos: usize) -> Self { Self { caret: pos, anchor: pos } }
+    fn point(pos: usize) -> Self {
+        Self { caret: pos, anchor: pos }
+    }
 
-    fn has_sel(self) -> bool { self.caret != self.anchor }
+    fn has_sel(self) -> bool {
+        self.caret != self.anchor
+    }
 
-    fn sel_lo(self) -> usize { self.caret.min(self.anchor) }
+    fn sel_lo(self) -> usize {
+        self.caret.min(self.anchor)
+    }
 
-    fn sel_hi(self) -> usize { self.caret.max(self.anchor) }
+    fn sel_hi(self) -> usize {
+        self.caret.max(self.anchor)
+    }
 
     /// Collapse selection: caret and anchor both land on `pos`.
-    fn collapse(pos: usize) -> Self { Self::point(pos) }
+    fn collapse(pos: usize) -> Self {
+        Self::point(pos)
+    }
 
     /// Extend selection: caret moves to `pos`, anchor stays.
-    fn extend(self, pos: usize) -> Self { Self { caret: pos, anchor: self.anchor } }
+    fn extend(self, pos: usize) -> Self {
+        Self { caret: pos, anchor: self.anchor }
+    }
 }
 
 const SPINNER_FRAMES: [&str; 4] = ["◜", "◝", "◞", "◟"];
@@ -60,15 +72,21 @@ pub struct Input {
 }
 
 impl ScrollItem for Input {
-    fn height(&self) -> u16 { 3 }
+    fn height(&self) -> u16 {
+        3
+    }
 
-    fn width(&self) -> u16 { 0 }
+    fn width(&self) -> u16 {
+        0
+    }
 }
 
 impl Deref for Input {
     type Target = EventTarget<InputEvent<String>>;
 
-    fn deref(&self) -> &Self::Target { &self.ev }
+    fn deref(&self) -> &Self::Target {
+        &self.ev
+    }
 }
 
 impl Input {

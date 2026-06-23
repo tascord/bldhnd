@@ -43,7 +43,9 @@ where
     K: std::hash::Hash + Eq + Clone,
     V: Clone,
 {
-    pub fn new(ttl: Duration) -> Self { Self { inner: DashMap::new(), ttl } }
+    pub fn new(ttl: Duration) -> Self {
+        Self { inner: DashMap::new(), ttl }
+    }
 
     pub fn get(&self, key: &K) -> Option<V> {
         let entry = self.inner.get(key)?;
@@ -68,7 +70,9 @@ static DATA_CLIENT: LazyLock<Arc<RouterClient>> = LazyLock::new(|| {
     .into()
 });
 
-pub fn data() -> Arc<RouterClient> { DATA_CLIENT.clone() }
+pub fn data() -> Arc<RouterClient> {
+    DATA_CLIENT.clone()
+}
 
 impl From<MinifiedRelease> for SearchResult {
     fn from(value: MinifiedRelease) -> Self {

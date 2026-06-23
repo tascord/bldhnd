@@ -13,8 +13,8 @@ use {
 pub mod data;
 pub mod events;
 pub mod fs;
-pub mod ui;
 pub mod logs;
+pub mod ui;
 
 static CONFIG: LazyLock<Arc<RwLock<Config>>> = LazyLock::new(|| Arc::new(RwLock::new(Config::new())));
 pub fn config() -> Arc<RwLock<Config>> { CONFIG.clone() }

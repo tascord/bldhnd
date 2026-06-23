@@ -20,8 +20,8 @@ use tokio::net::TcpStream;
 use tracing::debug;
 
 use crate::error::{Result, SlskError};
-use crate::proto::frame::{try_read_peer_frame, MsgBuilder};
-use crate::proto::peer_msg::{parse_peer_msg, PeerMsg};
+use crate::proto::frame::{MsgBuilder, try_read_peer_frame};
+use crate::proto::peer_msg::{PeerMsg, parse_peer_msg};
 
 pub struct PeerConn {
     pub(crate) stream: TcpStream,
@@ -46,13 +46,10 @@ impl PeerConn {
         server_token: Option<u32>, // Some(t) → send PierceFirewall first
     ) -> Result<Self> {
         debug!("Connecting to peer {addr} (type={conn_type})");
-        let stream = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            TcpStream::connect(addr),
-        )
-        .await
-        .map_err(|_| SlskError::Timeout)?
-        .map_err(SlskError::Io)?;
+        let stream = tokio::time::timeout(std::time::Duration::from_secs(10), TcpStream::connect(addr))
+            .await
+            .map_err(|_| SlskError::Timeout)?
+            .map_err(SlskError::Io)?;
 
         let mut c = PeerConn {
             stream,
@@ -68,11 +65,7 @@ impl PeerConn {
         }
 
         // Send PeerInit.
-        let msg = MsgBuilder::peer(1)
-            .str(our_username)
-            .str(conn_type)
-            .u32(token)
-            .build();
+        let msg = MsgBuilder::peer(1).str(our_username).str(conn_type).u32(token).build();
         c.send_raw(&msg).await?;
 
         c.username = our_username.to_owned(); // will be overwritten if we receive PeerInit
@@ -84,18 +77,14 @@ impl PeerConn {
     // -----------------------------------------------------------------------
 
     pub async fn accept(stream: TcpStream) -> Result<Self> {
-        let mut c = PeerConn {
-            stream,
-            buf: BytesMut::with_capacity(16 * 1024),
-            username: String::new(),
-            conn_type: String::new(),
-        };
+        let mut c =
+            PeerConn { stream, buf: BytesMut::with_capacity(16 * 1024), username: String::new(), conn_type: String::new() };
 
         // Read the first message; it's either PierceFirewall or PeerInit.
         let first = c.recv().await?;
         match first {
             PeerMsg::PeerInit { username, conn_type, .. } => {
-                c.username  = username;
+                c.username = username;
                 c.conn_type = conn_type;
             }
             PeerMsg::PierceFirewall { .. } => {
@@ -103,7 +92,7 @@ impl PeerConn {
                 let second = c.recv().await?;
                 match second {
                     PeerMsg::PeerInit { username, conn_type, .. } => {
-                        c.username  = username;
+                        c.username = username;
                         c.conn_type = conn_type;
                     }
                     other => {
@@ -114,9 +103,7 @@ impl PeerConn {
                 }
             }
             other => {
-                return Err(SlskError::PeerHandshake(format!(
-                    "unexpected first peer message: {other:?}"
-                )));
+                return Err(SlskError::PeerHandshake(format!("unexpected first peer message: {other:?}")));
             }
         }
 
@@ -140,10 +127,7 @@ impl PeerConn {
             let mut tmp = [0u8; 8192];
             let n = self.stream.read(&mut tmp).await?;
             if n == 0 {
-                return Err(SlskError::Io(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "peer closed connection",
-                )));
+                return Err(SlskError::Io(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "peer closed connection")));
             }
             self.buf.extend_from_slice(&tmp[..n]);
         }

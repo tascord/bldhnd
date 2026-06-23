@@ -36,7 +36,9 @@ pub struct Radio {
 impl Deref for Radio {
     type Target = EventTarget<InputEvent<usize>>;
 
-    fn deref(&self) -> &Self::Target { &self.ev }
+    fn deref(&self) -> &Self::Target {
+        &self.ev
+    }
 }
 
 impl Radio {
@@ -76,7 +78,6 @@ impl Radio {
                             return;
                         }
 
-
                         _ => return,
                     }
 
@@ -89,7 +90,6 @@ impl Radio {
         this.subs = Some([sub]);
         this
     }
-
 }
 
 impl Focusable for Radio {
@@ -104,7 +104,6 @@ impl Focusable for Radio {
     }
 }
 
-
 impl WidgetRef for Radio {
     fn render_ref(&self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer) {
         let s = self.selection.load(SeqCst);
@@ -113,17 +112,20 @@ impl WidgetRef for Radio {
             .iter()
             .enumerate()
             .map(|(i, o)| {
-                Line::styled(format!(
-                    "{} {}",
-                    match s == i {
-                        true => '●',
-                        false => '○',
+                Line::styled(
+                    format!(
+                        "{} {}",
+                        match s == i {
+                            true => '●',
+                            false => '○',
+                        },
+                        o
+                    ),
+                    match self.focused.load(SeqCst) {
+                        true => Style::new().white(),
+                        false => Style::new().gray(),
                     },
-                    o
-                ), match self.focused.load(SeqCst) {
-                    true => Style::new().white(),
-                    false => Style::new().gray(),
-                })
+                )
             })
             .collect::<Vec<_>>();
 

@@ -17,7 +17,9 @@ use {
 
 pub mod ty;
 static CLIENT: LazyLock<Arc<MusicBrainz>> = LazyLock::new(|| Arc::new(MusicBrainz::new()));
-pub fn client() -> Arc<MusicBrainz> { CLIENT.clone() }
+pub fn client() -> Arc<MusicBrainz> {
+    CLIENT.clone()
+}
 
 #[derive(Debug)]
 pub struct MusicBrainz {

@@ -12,7 +12,7 @@ use tokio::net::TcpStream;
 
 use crate::error::{Result, SlskError};
 use crate::proto::frame::try_read_server_frame;
-use crate::proto::msg::{parse_server_msg, ServerMsg};
+use crate::proto::msg::{ServerMsg, parse_server_msg};
 
 pub struct ServerConn {
     stream: TcpStream,

@@ -1,12 +1,17 @@
-use crate::ui::components::scroll::{Scroller, ScrollText};
+use crate::ui::components::scroll::{ScrollText, Scroller};
 use ratatui::prelude::Text;
 use std::sync::{Arc, LazyLock, RwLock};
-use tracing::{Level, field::{Field, Visit}};
+use tracing::{
+    Level,
+    field::{Field, Visit},
+};
 use tracing_subscriber::layer::{Context, Layer};
 
 static LOG_SCROLLER: LazyLock<Arc<Scroller>> = LazyLock::new(|| Arc::new(Scroller::new()));
 
-pub fn scroller() -> Arc<Scroller> { LOG_SCROLLER.clone() }
+pub fn scroller() -> Arc<Scroller> {
+    LOG_SCROLLER.clone()
+}
 
 /// Simple visitor to extract `message` field from tracing events.
 #[derive(Default)]
@@ -39,7 +44,9 @@ fn strip_ansi(s: &str) -> String {
                 while let Some(&nc) = chars.peek() {
                     let is_final = ('@'..='~').contains(&nc);
                     chars.next();
-                    if is_final { break; }
+                    if is_final {
+                        break;
+                    }
                 }
                 continue;
             }
@@ -54,7 +61,9 @@ pub struct LogsLayer {
 }
 
 impl Default for LogsLayer {
-    fn default() -> Self { Self { min_level: Level::TRACE } }
+    fn default() -> Self {
+        Self { min_level: Level::TRACE }
+    }
 }
 
 impl<S> Layer<S> for LogsLayer

@@ -1,7 +1,5 @@
 use {
-    futures_signals::
-        signal_map::MutableBTreeMap
-    ,
+    futures_signals::signal_map::MutableBTreeMap,
     std::{
         fmt::Debug,
         sync::{
@@ -21,11 +19,15 @@ pub struct Cancellable<T> {
 
 impl<T> std::ops::Deref for Cancellable<T> {
     type Target = T;
-    fn deref(&self) -> &Self::Target { &self.inner }
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
 }
 
 impl<T> Cancellable<T> {
-    pub fn cancel(&self) { self.cancelled.store(true, SeqCst); }
+    pub fn cancel(&self) {
+        self.cancelled.store(true, SeqCst);
+    }
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -50,7 +52,9 @@ impl<T: Debug> Debug for Subscription<T> {
 
 impl<T: Debug> Subscription<T> {
     #[instrument(level = "trace")]
-    pub(crate) fn update(&self, v: Arc<Cancellable<T>>) { (self.handler)(v) }
+    pub(crate) fn update(&self, v: Arc<Cancellable<T>>) {
+        (self.handler)(v)
+    }
 }
 
 #[derive(Debug)]
@@ -104,7 +108,9 @@ impl<T: Debug> EventTarget<T> {
 }
 
 impl<T: Debug> Default for EventTarget<T> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Debug> Clone for EventTarget<T> {

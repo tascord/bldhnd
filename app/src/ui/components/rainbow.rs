@@ -14,7 +14,9 @@ pub struct Rainbow {
 }
 
 impl Rainbow {
-    pub fn new() -> Self { Self { start: Instant::now() } }
+    pub fn new() -> Self {
+        Self { start: Instant::now() }
+    }
 
     pub fn apply(&self, text: &Text<'_>) -> Text<'static> {
         let time_offset = self.start.elapsed().as_secs_f64() * ANIM_SPEED;
@@ -49,7 +51,9 @@ impl Rainbow {
 }
 
 impl Default for Rainbow {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 fn hsl_to_rgb(h: f64, s: f64, l: f64) -> Color {

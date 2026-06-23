@@ -62,7 +62,9 @@ struct Toast {
 }
 
 impl Toast {
-    fn expired(&self) -> bool { self.created.elapsed() >= self.duration }
+    fn expired(&self) -> bool {
+        self.created.elapsed() >= self.duration
+    }
 }
 
 pub struct Sonner {
@@ -74,7 +76,9 @@ pub struct Sonner {
 
 static SONNER: LazyLock<Arc<Sonner>> = LazyLock::new(|| Arc::new(Sonner::new(4, 50)));
 
-pub fn sonner() -> Arc<Sonner> { SONNER.clone() }
+pub fn sonner() -> Arc<Sonner> {
+    SONNER.clone()
+}
 
 impl Sonner {
     fn new(max_visible: usize, max_queued: usize) -> Self {
@@ -98,17 +102,29 @@ impl Sonner {
         id
     }
 
-    pub fn info(&self, message: impl Display) -> u64 { self.push(ToastLevel::Info, message) }
+    pub fn info(&self, message: impl Display) -> u64 {
+        self.push(ToastLevel::Info, message)
+    }
 
-    pub fn warn(&self, message: impl Display) -> u64 { self.push(ToastLevel::Warn, message) }
+    pub fn warn(&self, message: impl Display) -> u64 {
+        self.push(ToastLevel::Warn, message)
+    }
 
-    pub fn error(&self, message: impl Display) -> u64 { self.push(ToastLevel::Error, message) }
+    pub fn error(&self, message: impl Display) -> u64 {
+        self.push(ToastLevel::Error, message)
+    }
 
-    pub fn dismiss(&self, id: u64) { self.queue.write().unwrap().retain(|t| t.id != id); }
+    pub fn dismiss(&self, id: u64) {
+        self.queue.write().unwrap().retain(|t| t.id != id);
+    }
 
-    pub fn clear(&self) { self.queue.write().unwrap().clear(); }
+    pub fn clear(&self) {
+        self.queue.write().unwrap().clear();
+    }
 
-    fn gc(&self) { self.queue.write().unwrap().retain(|t| !t.expired()); }
+    fn gc(&self) {
+        self.queue.write().unwrap().retain(|t| !t.expired());
+    }
 }
 
 impl WidgetRef for Sonner {
@@ -192,11 +208,15 @@ pub struct SonnerLayer {
 }
 
 impl SonnerLayer {
-    pub fn with_min_level(min_level: Level) -> Self { Self { min_level } }
+    pub fn with_min_level(min_level: Level) -> Self {
+        Self { min_level }
+    }
 }
 
 impl Default for SonnerLayer {
-    fn default() -> Self { Self { min_level: Level::WARN } }
+    fn default() -> Self {
+        Self { min_level: Level::WARN }
+    }
 }
 
 #[derive(Default)]

@@ -1,7 +1,7 @@
 use {
     crate::{
         events::{EventTarget, SubscriptionPriority},
-        ui::views::{home::HomeView, library::LibraryView, search::SearchView, settings::SettingsView, logs::LogsView},
+        ui::views::{home::HomeView, library::LibraryView, logs::LogsView, search::SearchView, settings::SettingsView},
     },
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
     ratatui::{
@@ -21,14 +21,16 @@ use {
 
 pub mod home;
 pub mod library;
+pub mod logs;
 pub mod results;
 pub mod search;
 pub mod settings;
-pub mod logs;
 
 static MODEL: LazyLock<Arc<Model>> = LazyLock::new(|| Arc::new(Model::new()));
 
-pub fn model() -> Arc<Model> { MODEL.clone() }
+pub fn model() -> Arc<Model> {
+    MODEL.clone()
+}
 
 pub fn vstack(c: &[u16], a: Rect) -> Vec<Rect> {
     let mut cons = Vec::new();
@@ -98,7 +100,9 @@ pub enum ModelView {
 }
 
 impl Default for ModelView {
-    fn default() -> Self { ModelView::Home(HomeView::new()) }
+    fn default() -> Self {
+        ModelView::Home(HomeView::new())
+    }
 }
 
 impl ModelView {
@@ -113,7 +117,13 @@ impl ModelView {
     }
 
     pub fn list() -> Vec<(String, usize)> {
-        vec![("Home".to_string(), 1), ("Search".to_string(), 2), ("Library".to_string(), 3), ("Settings".to_string(), 4), ("Logs".to_string(), 5)]
+        vec![
+            ("Home".to_string(), 1),
+            ("Search".to_string(), 2),
+            ("Library".to_string(), 3),
+            ("Settings".to_string(), 4),
+            ("Logs".to_string(), 5),
+        ]
     }
 
     pub fn key(k: KeyCode) {
@@ -185,10 +195,13 @@ impl Model {
             let text = format!("{} ({})", tab.0, tab.1);
             let text = Line::from_iter([
                 Span::raw("| "),
-                Span::styled(text, match sel == tab.1 {
-                    true => Style::new().bg(White).fg(Black),
-                    false => Style::new(),
-                }),
+                Span::styled(
+                    text,
+                    match sel == tab.1 {
+                        true => Style::new().bg(White).fg(Black),
+                        false => Style::new(),
+                    },
+                ),
                 Span::raw(" |"),
             ]);
 
