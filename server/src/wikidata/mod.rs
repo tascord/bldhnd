@@ -141,6 +141,13 @@ impl WikiData {
         let mut db = Database::create(&db_path)
             .unwrap_or_else(|e| panic!("Failed to create WikiData db at {}: {e} (check disk space and permissions)", db_path.display()));
         db.compact().expect("Failed to compact WikiData db");
+
+        // Ensure tables exist even before we write
+        let txn = db.begin_write().unwrap();
+        txn.open_table(Self::items_table_def()).unwrap();
+        txn.open_table(Self::indexes_table_def()).unwrap();
+        txn.commit().unwrap();
+
         Self { db }
     }
 

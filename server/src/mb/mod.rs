@@ -145,6 +145,12 @@ impl MusicBrainz {
         let mut db = Database::create(db().join("mb.db")).expect("Failed to create MusicBrain db");
         db.compact().expect("Failed to compact mb db");
 
+        // Ensure tables exist even before we write
+        let txn = db.begin_write().unwrap();
+        txn.open_table(Self::releases_table_def()).unwrap();
+        txn.open_table(Self::indexes_table_def()).unwrap();
+        txn.commit().unwrap();
+
         Self { latest: Arc::new(RwLock::new(['\0'; 16])), db }
     }
 
