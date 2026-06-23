@@ -19,11 +19,14 @@
       version = "0.1.0";
       inherit src;
     };
-    # Build deps-only first (external crates only)
-    cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+    # Build deps-only first (external crates only) with vendoring disabled
+    # because we have local path deps that aren't in vendor
+    cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
+      vendorSrc = null;
+    });
 
-    # fz is built without pre-built artifacts since it's a local path workspace member
     fz = craneLib.buildPackage (commonArgs // {
+      inherit cargoArtifacts;
       pname = "fz";
       cargoExtraArgs = "-p fz";
       doCheck = false;
@@ -37,8 +40,9 @@
     });
 
     server = craneLib.buildPackage (commonArgs // {
+      inherit cargoArtifacts;
       pname = "bh-server";
-      cargoExtraArgs = "-p bh-server -p fz";
+      cargoExtraArgs = "-p bh-server";
       doCheck = false;
     });
   in
