@@ -1,12 +1,16 @@
+use crate::table_list_kv;
+
 use {
     crate::{KnowledgeBase, db, mb::ty::MinifiedRelease},
     anyhow::{anyhow, bail},
     async_compression::tokio::bufread::XzDecoder,
     futures::StreamExt,
+    fz::fzrank,
     redb::{Database, ReadableDatabase, ReadableTable, TableDefinition},
     serde_json,
     std::{
         path::Path,
+        sync::atomic::{AtomicUsize, Ordering},
         sync::{Arc, LazyLock, RwLock},
     },
     tokio::io::{AsyncBufReadExt, BufReader},
@@ -25,6 +29,7 @@ pub fn client() -> Arc<MusicBrainz> {
 pub struct MusicBrainz {
     latest: Arc<RwLock<[char; 16]>>,
     db: Database,
+    total: AtomicUsize,
 }
 
 impl KnowledgeBase for MusicBrainz {
@@ -39,99 +44,47 @@ impl KnowledgeBase for MusicBrainz {
 
     fn search(&self, q: &str, p: usize) -> anyhow::Result<Vec<Self::Output>> {
         let tx = self.db.begin_read()?;
-        let idx = tx.open_table(MusicBrainz::indexes_table_def())?;
+        let releases = tx.open_table(MusicBrainz::releases_table_def())?;
 
-        fn score_candidate(title: &str, q: &str) -> Option<i64> {
-            if q.is_empty() {
-                return Some(0);
+        let entries: Vec<(String, Vec<String>)> = table_list_kv(MusicBrainz::indexes_table_def(), &tx)?
+            .into_iter()
+            .map(|(k, v)| (k.value().clone(), v.value().clone()))
+            .collect();
+
+        let titles: Vec<String> = entries.iter().map(|(t, _)| t.clone()).collect();
+        let scored = fzrank(q, &titles);
+
+        let mut flat: Vec<(i32, String)> = Vec::new();
+        for &(idx, score) in scored.iter() {
+            if idx >= entries.len() {
+                continue;
             }
-            let t = title.to_lowercase();
-            let q = q.to_lowercase();
-            if let Some(pos) = t.find(&q) {
-                return Some((1000i64 - pos as i64).max(1));
+            let ids = &entries[idx].1;
+            for id in ids {
+                flat.push((score, id.clone()));
             }
-
-            let t_chars: Vec<char> = t.chars().collect();
-            let q_chars: Vec<char> = q.chars().collect();
-
-            let mut qi = 0usize;
-            let mut first = None;
-            let mut last = 0usize;
-
-            for (i, &c) in t_chars.iter().enumerate() {
-                if qi < q_chars.len() && c == q_chars[qi] {
-                    if first.is_none() {
-                        first = Some(i);
-                    }
-                    last = i;
-                    qi += 1;
-                }
-            }
-
-            if qi == q_chars.len() {
-                let first = first.unwrap_or(0);
-                let span = (last - first) as i64 + 1;
-                let score = 500i64 + (qi as i64 * 10) - span;
-                return Some(score.max(1));
-            }
-
-            None
         }
 
-        match (idx.first()?, idx.last()?) {
-            (Some((lk, _)), Some((rk, _))) => {
-                let lkey = lk.value().clone();
-                let rkey = rk.value().clone();
-                let range = idx.range(lkey..=rkey)?;
-                let mut scored: Vec<(i64, String)> = Vec::new();
+        flat.sort_unstable_by(|a, b| b.0.cmp(&a.0));
 
-                let releases = tx.open_table(MusicBrainz::releases_table_def())?;
+        let offset = 50usize.saturating_mul(p);
+        let mut out = Vec::new();
 
-                for item in range {
-                    let (k, v) = item?;
-                    let title = k.value();
-                    let ids = v.value();
-                    if let Some(s) = score_candidate(&title, q) {
-                        for id in ids {
-                            scored.push((s, id));
-                        }
-                    }
+        for (_, id) in flat.into_iter().skip(offset).take(50) {
+            if let Some(val) = releases.get(&id)? {
+                let s = val.value();
+                match serde_json::from_str::<MinifiedRelease>(&s) {
+                    Ok(min) => out.push(min),
+                    Err(e) => warn!(error = %e, id = %id, "failed to deserialize release json"),
                 }
-
-                scored.sort_by_key(|b| std::cmp::Reverse(b.0));
-
-                let offset = 50usize.saturating_mul(p);
-                let mut out = Vec::new();
-
-                for (_score, id) in scored.into_iter().skip(offset).take(50) {
-                    if let Some(val) = releases.get(&id)? {
-                        let s = val.value();
-                        match serde_json::from_str::<MinifiedRelease>(&s) {
-                            Ok(min) => out.push(min),
-                            Err(e) => {
-                                warn!(error = %e, id = %id, "failed to deserialize release json");
-                                continue;
-                            }
-                        }
-                    }
-                }
-
-                Ok(out)
             }
-            _ => Ok(Vec::new()),
         }
+
+        Ok(out)
     }
 
     fn stats(&self) -> anyhow::Result<usize> {
-        let idx = self.db.begin_read()?.open_table(MusicBrainz::indexes_table_def())?;
-        match (idx.first()?, idx.last()?) {
-            (Some((lk, _)), Some((rk, _))) => {
-                let lkey = lk.value().clone();
-                let rkey = rk.value().clone();
-                Ok(idx.range(lkey..=rkey)?.count())
-            }
-            _ => Ok(0),
-        }
+        Ok(self.total.load(Ordering::Relaxed))
     }
 }
 
@@ -147,7 +100,9 @@ impl MusicBrainz {
         txn.open_table(Self::checkpoint_table_def()).unwrap();
         txn.commit().unwrap();
 
-        Self { latest: Arc::new(RwLock::new(['\0'; 16])), db }
+        let total = load_mb_cursor(&db).map(|(_, lines)| lines).unwrap_or(0);
+
+        Self { latest: Arc::new(RwLock::new(['\0'; 16])), db, total: AtomicUsize::new(total) }
     }
 
     pub fn releases_table_def<'a>() -> TableDefinition<'a, String, String> {
@@ -253,6 +208,7 @@ impl MusicBrainz {
                     let tx = self.db.begin_write()?;
                     let mut t_data = tx.open_table(MusicBrainz::releases_table_def())?;
                     let mut t_idx = tx.open_table(MusicBrainz::indexes_table_def())?;
+                    let mut batch_count = 0usize;
 
                     for line in batch_lines {
                         match serde_json::from_str::<ty::Root>(&line).map(MinifiedRelease::from) {
@@ -266,6 +222,7 @@ impl MusicBrainz {
                                 })?;
 
                                 processed += 1;
+                                batch_count += 1;
                             }
                             Err(e) => {
                                 failures += 1;
@@ -278,6 +235,8 @@ impl MusicBrainz {
                     drop(t_idx);
 
                     tx.commit()?;
+
+                    self.total.fetch_add(batch_count, Ordering::Relaxed);
 
                     save_mb_cursor(&self.db, &latest, processed);
 

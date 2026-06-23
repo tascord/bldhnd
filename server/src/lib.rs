@@ -1,6 +1,7 @@
 use {
     crate::{mb::ty::MinifiedRelease, reqwest::header::HeaderMap, wikidata::ty::WikiDataItem},
     milrouter::*,
+    redb::{ReadTransaction, ReadableTable, TableDefinition},
     serde::Serialize,
     std::{
         env,
@@ -100,3 +101,57 @@ pub enum Router {
 }
 
 pub fn notice() -> String { include_str!("../../CREDITS.md").to_string() }
+
+pub fn table_list<'a, K, V>(
+    t: TableDefinition<'a, K, V>,
+    tx: ReadTransaction,
+) -> anyhow::Result<Vec<redb::AccessGuard<'a, V>>>
+where
+    K: redb::Key + 'static,
+    V: redb::Value + 'static,
+{
+    let table = tx.open_table(t)?;
+    let l = match table.first()? {
+        Some(v) => v,
+        _ => return Ok(Vec::new()),
+    };
+
+    let r = match table.last()? {
+        Some(v) => v,
+        _ => return Ok(Vec::new()),
+    };
+
+    let lb = l.0.value();
+    let rb = r.0.value();
+
+    let range = lb..=rb;
+
+    Ok(table.range(range)?.filter_map(|d| d.ok()).map(|(_, v)| v).collect::<Vec<_>>())
+}
+
+pub fn table_list_kv<'a, K, V>(
+    t: TableDefinition<'a, K, V>,
+    tx: &ReadTransaction,
+) -> anyhow::Result<Vec<(redb::AccessGuard<'a, K>, redb::AccessGuard<'a, V>)>>
+where
+    K: redb::Key + 'static,
+    V: redb::Value + 'static,
+{
+    let table = tx.open_table(t)?;
+    let l = match table.first()? {
+        Some(v) => v,
+        _ => return Ok(Vec::new()),
+    };
+
+    let r = match table.last()? {
+        Some(v) => v,
+        _ => return Ok(Vec::new()),
+    };
+
+    let lb = l.0.value();
+    let rb = r.0.value();
+
+    let range = lb..=rb;
+
+    Ok(table.range(range)?.filter_map(|d| d.ok()).map(|(k, v)| (k, v)).collect::<Vec<_>>())
+}

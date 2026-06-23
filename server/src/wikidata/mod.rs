@@ -1,16 +1,18 @@
 use {
-    crate::{KnowledgeBase, db, wikidata::ty::WikiDataItem},
+    crate::{KnowledgeBase, db, table_list_kv, wikidata::ty::WikiDataItem},
+    fz::fzrank,
     redb::{Database, ReadableDatabase, ReadableTable, TableDefinition},
-    std::sync::{Arc, LazyLock},
+    std::sync::{
+        Arc, LazyLock,
+        atomic::{AtomicUsize, Ordering},
+    },
     tracing::{info, warn},
 };
 
 pub mod ty;
 
 static CLIENT: LazyLock<Arc<WikiData>> = LazyLock::new(|| Arc::new(WikiData::new()));
-pub fn client() -> Arc<WikiData> {
-    CLIENT.clone()
-}
+pub fn client() -> Arc<WikiData> { CLIENT.clone() }
 
 /// Number of items requested per SPARQL page.
 ///
@@ -23,46 +25,7 @@ const SPARQL_ENDPOINT: &str = "https://query.wikidata.org/sparql";
 
 pub struct WikiData {
     db: Database,
-}
-
-/// Fuzzy-score `title` against query `q`.
-///
-/// Returns `None` if `title` contains no subsequence match for `q`.
-/// Higher scores indicate a better match; substring matches beat subsequence
-/// matches, and earlier/tighter spans beat later/looser ones.
-fn score_candidate(title: &str, q: &str) -> Option<i64> {
-    if q.is_empty() {
-        return Some(0);
-    }
-    let t = title.to_lowercase();
-    let q = q.to_lowercase();
-    if let Some(pos) = t.find(&q) {
-        return Some((1_000i64 - pos as i64).max(1));
-    }
-
-    let t_chars: Vec<char> = t.chars().collect();
-    let q_chars: Vec<char> = q.chars().collect();
-    let mut qi = 0usize;
-    let mut first = None;
-    let mut last = 0usize;
-
-    for (i, &c) in t_chars.iter().enumerate() {
-        if qi < q_chars.len() && c == q_chars[qi] {
-            if first.is_none() {
-                first = Some(i);
-            }
-            last = i;
-            qi += 1;
-        }
-    }
-
-    if qi == q_chars.len() {
-        let first = first.unwrap_or(0);
-        let span = (last - first) as i64 + 1;
-        return Some((500i64 + (qi as i64 * 10) - span).max(1));
-    }
-
-    None
+    total: AtomicUsize,
 }
 
 impl KnowledgeBase for WikiData {
@@ -78,62 +41,45 @@ impl KnowledgeBase for WikiData {
 
     fn search(&self, q: &str, p: usize) -> anyhow::Result<Vec<Self::Output>> {
         let tx = self.db.begin_read()?;
-        let idx = tx.open_table(WikiData::indexes_table_def())?;
+        let items = tx.open_table(WikiData::items_table_def())?;
 
-        match (idx.first()?, idx.last()?) {
-            (Some((lk, _)), Some((rk, _))) => {
-                let lkey = lk.value().clone();
-                let rkey = rk.value().clone();
-                let range = idx.range(lkey..=rkey)?;
-                let mut scored: Vec<(i64, String)> = Vec::new();
+        let entries: Vec<(String, Vec<String>)> = table_list_kv(WikiData::indexes_table_def(), &tx)?
+            .into_iter()
+            .map(|(k, v)| (k.value().clone(), v.value().clone()))
+            .collect();
 
-                let items = tx.open_table(WikiData::items_table_def())?;
+        let titles: Vec<String> = entries.iter().map(|(t, _)| t.clone()).collect();
+        let scored = fzrank(q, &titles);
 
-                for entry in range {
-                    let (k, v) = entry?;
-                    let title = k.value();
-                    let ids = v.value();
-                    if let Some(s) = score_candidate(&title, q) {
-                        for id in ids {
-                            scored.push((s, id));
-                        }
-                    }
-                }
-
-                scored.sort_by_key(|b| std::cmp::Reverse(b.0));
-
-                let offset = 50usize.saturating_mul(p);
-                let mut out = Vec::new();
-
-                for (_score, id) in scored.into_iter().skip(offset).take(50) {
-                    if let Some(val) = items.get(&id)? {
-                        let s = val.value();
-                        match serde_json::from_str::<WikiDataItem>(&s) {
-                            Ok(item) => out.push(item),
-                            Err(e) => {
-                                warn!(error = %e, %id, "failed to deserialize wikidata item");
-                            }
-                        }
-                    }
-                }
-
-                Ok(out)
+        let mut flat: Vec<(i32, String)> = Vec::new();
+        for &(idx, score) in scored.iter() {
+            if idx >= entries.len() {
+                continue;
             }
-            _ => Ok(Vec::new()),
+            for id in &entries[idx].1 {
+                flat.push((score, id.clone()));
+            }
         }
+
+        flat.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+
+        let offset = 50usize.saturating_mul(p);
+        let mut out = Vec::new();
+
+        for (_, id) in flat.into_iter().skip(offset).take(50) {
+            if let Some(val) = items.get(&id)? {
+                let s = val.value();
+                match serde_json::from_str::<WikiDataItem>(&s) {
+                    Ok(item) => out.push(item),
+                    Err(e) => warn!(error = %e, %id, "failed to deserialize wikidata item"),
+                }
+            }
+        }
+
+        Ok(out)
     }
 
-    fn stats(&self) -> anyhow::Result<usize> {
-        let idx = self.db.begin_read()?.open_table(WikiData::indexes_table_def())?;
-        match (idx.first()?, idx.last()?) {
-            (Some((lk, _)), Some((rk, _))) => {
-                let lkey = lk.value().clone();
-                let rkey = rk.value().clone();
-                Ok(idx.range(lkey..=rkey)?.count())
-            }
-            _ => Ok(0),
-        }
-    }
+    fn stats(&self) -> anyhow::Result<usize> { Ok(self.total.load(Ordering::Relaxed)) }
 }
 
 #[allow(clippy::new_without_default)]
@@ -145,20 +91,19 @@ impl WikiData {
         });
         db.compact().expect("Failed to compact WikiData db");
 
-        // Ensure tables exist even before we write
         let txn = db.begin_write().unwrap();
         txn.open_table(Self::items_table_def()).unwrap();
         txn.open_table(Self::indexes_table_def()).unwrap();
         txn.open_table(Self::checkpoint_table_def()).unwrap();
         txn.commit().unwrap();
 
-        Self { db }
+        let (_, total) = load_wikidata_offset(&db);
+
+        Self { db, total: AtomicUsize::new(total) }
     }
 
     /// Primary-key table: QID → JSON-serialised `WikiDataItem`.
-    pub fn items_table_def<'a>() -> TableDefinition<'a, String, String> {
-        TableDefinition::<String, String>::new("items")
-    }
+    pub fn items_table_def<'a>() -> TableDefinition<'a, String, String> { TableDefinition::<String, String>::new("items") }
 
     /// Inverted-index table: lowercase title → Vec<QID>.
     pub fn indexes_table_def<'a>() -> TableDefinition<'a, String, Vec<String>> {
@@ -180,7 +125,7 @@ impl WikiData {
             .timeout(std::time::Duration::from_secs(180))
             .build()?;
 
-        let mut offset = load_wikidata_offset(&self.db);
+        let (mut offset, _) = load_wikidata_offset(&self.db);
 
         let mut total_processed = 0usize;
         let mut total_skipped = 0usize;
@@ -191,7 +136,7 @@ impl WikiData {
         loop {
             let query = build_sparql_query(type_qid, BATCH_SIZE, offset);
 
-            save_wikidata_offset(&self.db, offset);
+            save_wikidata_offset(&self.db, offset, self.total.load(Ordering::Relaxed));
             info!(%offset, "Querying WikiData SPARQL endpoint");
 
             let resp = loop {
@@ -278,6 +223,9 @@ impl WikiData {
             }
             tx.commit()?;
 
+            self.total.fetch_add(batch_len, Ordering::Relaxed);
+            save_wikidata_offset(&self.db, offset, self.total.load(Ordering::Relaxed));
+
             info!(total_processed, total_skipped, %offset, "Committed WikiData batch");
 
             if batch_len < BATCH_SIZE {
@@ -298,28 +246,27 @@ impl WikiData {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-fn load_wikidata_offset(db: &Database) -> usize {
+fn load_wikidata_offset(db: &Database) -> (usize, usize) {
     let tx = db.begin_read().unwrap();
     let table = tx.open_table(WikiData::checkpoint_table_def()).unwrap();
     table
         .get("cursor".to_string())
         .ok()
         .flatten()
-        .map(|v| {
+        .and_then(|v| {
             let s = v.value();
-            serde_json::from_str::<serde_json::Value>(&s)
-                .ok()
-                .and_then(|v| v.get("offset").and_then(|v| v.as_u64()))
-                .map(|n| n as usize)
-                .unwrap_or(0)
+            let parsed = serde_json::from_str::<serde_json::Value>(&s).ok()?;
+            let offset = parsed.get("offset").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(0);
+            let total = parsed.get("total").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(offset);
+            Some((offset, total))
         })
-        .unwrap_or(0)
+        .unwrap_or((0, 0))
 }
 
-fn save_wikidata_offset(db: &Database, offset: usize) {
+fn save_wikidata_offset(db: &Database, offset: usize, total: usize) {
     let tx = db.begin_write().unwrap();
     let mut table = tx.open_table(WikiData::checkpoint_table_def()).unwrap();
-    let payload = serde_json::json!({ "offset": offset }).to_string();
+    let payload = serde_json::json!({ "offset": offset, "total": total }).to_string();
     table.insert("cursor".to_string(), payload).unwrap();
     drop(table);
     tx.commit().unwrap();
