@@ -54,9 +54,8 @@ impl Button {
             let evt = this.ev.clone();
 
             move |ev| {
-                if let ModelEvent::KeyPress(key_event) = **ev
-                    && focused.load(SeqCst)
-                {
+                let ModelEvent::KeyPress(key_event) = **ev;
+                if focused.load(SeqCst) {
                     match key_event.code {
                         KeyCode::Tab | KeyCode::Esc => {
                             evt.emit(InputEvent::Blur);

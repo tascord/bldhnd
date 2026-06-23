@@ -69,6 +69,7 @@ impl Deref for Scroller {
     fn deref(&self) -> &Self::Target { &self.ev }
 }
 
+#[allow(clippy::new_without_default)]
 impl Scroller {
     pub fn new() -> Self {
         let mut this = Self {
@@ -87,69 +88,68 @@ impl Scroller {
             let items = this.items.clone();
 
             move |ev| {
-                if let ModelEvent::KeyPress(key_event) = **ev {
-                    if !focused.load(SeqCst) {
-                        return;
+                let ModelEvent::KeyPress(key_event) = **ev;
+                if !focused.load(SeqCst) {
+                    return;
+                }
+
+                let prev = selected.load(SeqCst);
+                let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
+                let items = items.read().unwrap();
+                let len = items.len();
+
+                match key_event.code {
+                    KeyCode::Up if ctrl => {
+                        selected.store(0, SeqCst);
+                    }
+                    KeyCode::Up => {
+                        let cur = selected.load(SeqCst);
+                        selected.store(cur.saturating_sub(1), SeqCst);
+                    }
+                    KeyCode::Home => {
+                        selected.store(0, SeqCst);
                     }
 
-                    let prev = selected.load(SeqCst);
-                    let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
-                    let items = items.read().unwrap();
-                    let len = items.len();
-
-                    match key_event.code {
-                        KeyCode::Up if ctrl => {
-                            selected.store(0, SeqCst);
+                    KeyCode::Down if ctrl => {
+                        if len > 0 {
+                            selected.store(len - 1, SeqCst);
                         }
-                        KeyCode::Up => {
-                            let cur = selected.load(SeqCst);
-                            selected.store(cur.saturating_sub(1), SeqCst);
+                    }
+                    KeyCode::Down => {
+                        let cur = selected.load(SeqCst);
+                        if len > 0 {
+                            selected.store((cur + 1).min(len - 1), SeqCst);
                         }
-                        KeyCode::Home => {
-                            selected.store(0, SeqCst);
+                    }
+                    KeyCode::End => {
+                        if len > 0 {
+                            selected.store(len - 1, SeqCst);
                         }
-
-                        KeyCode::Down if ctrl => {
-                            if len > 0 {
-                                selected.store(len - 1, SeqCst);
-                            }
-                        }
-                        KeyCode::Down => {
-                            let cur = selected.load(SeqCst);
-                            if len > 0 {
-                                selected.store((cur + 1).min(len - 1), SeqCst);
-                            }
-                        }
-                        KeyCode::End => {
-                            if len > 0 {
-                                selected.store(len - 1, SeqCst);
-                            }
-                        }
-
-                        KeyCode::Tab | KeyCode::Esc => {
-                            evt.emit(InputEvent::Blur);
-                            focused.store(false, SeqCst);
-                        }
-
-                        KeyCode::Enter => {
-                            evt.emit(InputEvent::Submit(selected.load(SeqCst)));
-                        }
-
-                        _ => return,
                     }
 
-                    ev.cancel();
-                    if let Some(it) = items.get(prev)
-                        && focused.load(SeqCst)
-                    {
-                        it.blur();
+                    KeyCode::Tab | KeyCode::Esc => {
+                        evt.emit(InputEvent::Blur);
+                        focused.store(false, SeqCst);
                     }
 
-                    if let Some(it) = items.get(selected.load(SeqCst))
-                        && focused.load(SeqCst)
-                    {
-                        it.focus();
+                    KeyCode::Enter => {
+                        evt.emit(InputEvent::Submit(selected.load(SeqCst)));
                     }
+
+                    _ => return,
+                }
+
+                ev.cancel();
+                if let Some(it) = items.get(prev)
+                    && focused.load(SeqCst)
+                {
+                    it.blur();
+                }
+
+                if let Some(it) = items.get(selected.load(SeqCst))
+                    && focused.load(SeqCst)
+                {
+                    it.focus();
                 }
             }
         });

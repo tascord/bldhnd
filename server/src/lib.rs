@@ -1,19 +1,12 @@
 use {
-    crate::{mb::ty::MinifiedRelease, wikidata::ty::WikiDataItem},
-    milrouter::{
-        hyper::{server::conn::http1, service::service_fn},
-        hyper_util::rt::TokioIo,
-        *,
-    },
-    crate::reqwest::header::HeaderMap,
+    crate::{mb::ty::MinifiedRelease, reqwest::header::HeaderMap, wikidata::ty::WikiDataItem},
+    milrouter::*,
     serde::Serialize,
     std::{
         env,
         fs::{self},
         path::{Path, PathBuf},
     },
-    tokio::{net::TcpListener, spawn},
-    tracing::{info, warn},
 };
 
 pub mod mb;

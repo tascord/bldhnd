@@ -52,7 +52,7 @@ impl PeerConn {
         )
         .await
         .map_err(|_| SlskError::Timeout)?
-        .map_err(|e| SlskError::Io(e))?;
+        .map_err(SlskError::Io)?;
 
         let mut c = PeerConn {
             stream,

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{events::SubscriptionPriority, ui::components::{Focusable, InputEvent, scroll::{ScrollText, Scroller}}};
+use crate::ui::components::{Focusable, scroll::{ScrollText, Scroller}};
 
 use {
     crate::ui::views::home::BANNER_FONT,

@@ -11,6 +11,7 @@ use {
 
 
 pub struct Modal {
+    #[allow(dead_code)]
     queue: RwLock<Vec<()>>,
 }
 
@@ -25,6 +26,6 @@ impl Modal {
 }
 
 impl WidgetRef for Modal {
-    fn render_ref(&self, area: Rect, buf: &mut Buffer) {
+    fn render_ref(&self, _area: Rect, _buf: &mut Buffer) {
     }
 }

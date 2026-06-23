@@ -65,6 +65,7 @@ impl File {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct Library {
     ev: EventTarget<LibraryEvent>,
     files: RwLock<Vec<Arc<File>>>,
@@ -79,7 +80,9 @@ impl Deref for Library {
     }
 }
 
+#[allow(clippy::new_without_default)]
 impl Library {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             scanning: AtomicBool::new(false),
@@ -88,6 +91,7 @@ impl Library {
         }
     }
 
+    #[allow(dead_code)]
     fn scan() {
         let lock = library();
         let lock = lock.write().unwrap();
@@ -100,7 +104,7 @@ impl Library {
             let c = config();
             let c = c.read().unwrap().clone();
 
-            for v in c.volumes {
+            for _v in c.volumes {
                 // Scan volume
             }
 

@@ -92,10 +92,8 @@ impl Input {
             let loading = this.loading.clone();
 
             move |ev| {
-                if let ModelEvent::KeyPress(key_event) = **ev
-                    && focused.load(SeqCst)
-                    && !loading.load(SeqCst)
-                {
+                let ModelEvent::KeyPress(key_event) = **ev;
+                if focused.load(SeqCst) && !loading.load(SeqCst) {
                     let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
                     let shft = key_event.modifiers.contains(KeyModifiers::SHIFT);
 

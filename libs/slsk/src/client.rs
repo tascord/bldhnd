@@ -28,7 +28,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use rand::{RngExt, rngs::ThreadRng};
+use rand::RngExt;
 use tracing::{debug, info, warn};
 
 use crate::error::{Result, SlskError};

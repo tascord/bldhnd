@@ -1,5 +1,3 @@
-use crate::ui::components::sonner::{self, sonner};
-
 use {
     crate::{
         events::{EventTarget, SubscriptionPriority},
@@ -8,10 +6,6 @@ use {
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
     ratatui::{
         DefaultTerminal, Frame,
-        layout::{
-            Constraint::Length,
-            Direction::{Horizontal, Vertical},
-        },
         prelude::*,
         style::Color::{Black, White},
         widgets::{Block, BorderType, Borders, Paragraph, WidgetRef},
@@ -166,13 +160,12 @@ impl Model {
 
         m.target
             .on(SubscriptionPriority::Low, |v| {
-                if let ModelEvent::KeyPress(ev) = **v {
-                    if ev.code == KeyCode::Char('q') || ev.code == KeyCode::Char('Q') {
-                        return model().exit.store(true, SeqCst);
-                    }
-
-                    ModelView::key(ev.code);
+                let ModelEvent::KeyPress(ev) = **v;
+                if ev.code == KeyCode::Char('q') || ev.code == KeyCode::Char('Q') {
+                    return model().exit.store(true, SeqCst);
                 }
+
+                ModelView::key(ev.code);
             })
             .forget();
 

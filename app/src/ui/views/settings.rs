@@ -6,8 +6,7 @@ use {
             components::{
                 Focusable, InputEvent,
                 button::Button,
-                input::Input,
-                scroll::{self, ScrollText, Scroller},
+                scroll::{ScrollText, Scroller},
             },
             views::home::BANNER_FONT,
         },
@@ -34,7 +33,7 @@ impl SettingsView {
         let text = flet.convert("settings").unwrap().to_string();
 
         let c = config();
-        let c = c.read().unwrap();
+        let _c = c.read().unwrap();
 
         let mut subs = (Vec::new(), ());
         let scroller = Scroller::new();

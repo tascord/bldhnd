@@ -1,7 +1,5 @@
-use bh_server::{mb::ty::MinifiedRelease, wikidata::ty::WikiDataItem};
-
 use {
-    bh_server::RouterClient,
+    bh_server::{RouterClient, mb::ty::MinifiedRelease, wikidata::ty::WikiDataItem},
     chrono::NaiveDate,
     dashmap::DashMap,
     std::{

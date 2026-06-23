@@ -14,7 +14,7 @@ use {
     },
     std::sync::{Arc, RwLock},
     to_and_fro::ToAndFro,
-    tokio::{spawn, task::spawn_local},
+    tokio::spawn,
     tracing::warn,
 };
 

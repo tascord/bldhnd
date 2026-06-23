@@ -116,6 +116,7 @@ impl<T: Debug> Clone for EventTarget<T> {
 /// Owns removal-on-drop instead of a raw pointer back to the target.
 /// MutableBTreeMap is itself Arc-backed internally, so cloning it here
 /// is cheap and avoids any lifetime/unsafe tricks.
+#[allow(dead_code)]
 pub struct SubscriptionHandle<T: Debug> {
     id: Uuid,
     sub: Arc<Subscription<T>>,

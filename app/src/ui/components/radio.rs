@@ -56,9 +56,8 @@ impl Radio {
             let evt = this.ev.clone();
 
             move |ev| {
-                if let ModelEvent::KeyPress(key_event) = **ev
-                    && focused.load(SeqCst)
-                {
+                let ModelEvent::KeyPress(key_event) = **ev;
+                if focused.load(SeqCst) {
                     let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
 
                     match key_event.code {
@@ -116,7 +115,7 @@ impl WidgetRef for Radio {
             .map(|(i, o)| {
                 Line::styled(format!(
                     "{} {}",
-                    match s == i as usize {
+                    match s == i {
                         true => '●',
                         false => '○',
                     },
