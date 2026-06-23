@@ -16,7 +16,7 @@ pub fn client() -> Arc<WikiData> { CLIENT.clone() }
 /// multi-valued properties (genres, formats) comfortably at this size while
 /// staying well within the 60-second query timeout.  Adjust down if you
 /// consistently see timeout errors, or up (to ~10 000) on a dedicated mirror.
-const BATCH_SIZE: usize = 5_000;
+const BATCH_SIZE: usize = 1000;
 const SPARQL_ENDPOINT: &str = "https://query.wikidata.org/sparql";
 
 pub struct WikiData {
@@ -146,6 +146,7 @@ impl WikiData {
         let txn = db.begin_write().unwrap();
         txn.open_table(Self::items_table_def()).unwrap();
         txn.open_table(Self::indexes_table_def()).unwrap();
+        txn.open_table(Self::checkpoint_table_def()).unwrap();
         txn.commit().unwrap();
 
         Self { db }
@@ -161,6 +162,11 @@ impl WikiData {
         TableDefinition::<String, Vec<String>>::new("indexes")
     }
 
+    /// Checkpoint table: cursor key → JSON state.
+    pub fn checkpoint_table_def<'a>() -> TableDefinition<'a, String, String> {
+        TableDefinition::<String, String>::new("checkpoint")
+    }
+
     /// Scrape all entities of a given WikiData instance type (`type_qid`, e.g.
     /// `"Q11424"`) in paginated SPARQL batches, then ingest them into the local
     /// redb database.
@@ -168,28 +174,46 @@ impl WikiData {
     async fn fetch_media_type(&self, type_qid: &str, media_type: &str) -> anyhow::Result<()> {
         let http = reqwest::Client::builder()
             .user_agent("bh-server/0.1 (https://github.com/tascord/bldhnd; knowledge-base bot)")
+            .timeout(std::time::Duration::from_secs(180))
             .build()?;
 
-        let mut offset = 0usize;
+        let mut offset = load_wikidata_offset(&self.db);
+
         let mut total_processed = 0usize;
         let mut total_skipped = 0usize;
+        let mut backoff_ms = 1000u64;
 
         info!("Starting WikiData scrape");
 
         loop {
             let query = build_sparql_query(type_qid, BATCH_SIZE, offset);
 
+            save_wikidata_offset(&self.db, offset);
             info!(%offset, "Querying WikiData SPARQL endpoint");
 
-            let resp = http
-                .get(SPARQL_ENDPOINT)
-                .query(&[("query", query.as_str()), ("format", "json")])
-                .header(reqwest::header::ACCEPT, "application/sparql-results+json")
-                .send()
-                .await?
-                .error_for_status()?
-                .json::<ty::SparqlResponse>()
-                .await?;
+            let resp = loop {
+                match http
+                    .get(SPARQL_ENDPOINT)
+                    .query(&[("query", query.as_str()), ("format", "json")])
+                    .header(reqwest::header::ACCEPT, "application/sparql-results+json")
+                    .send()
+                    .await
+                {
+                    Ok(resp) => break resp,
+                    Err(e) if backoff_ms > 60_000 => {
+                        warn!(error = %e, "WikiData request failed permanently");
+                        return Err(e.into());
+                    }
+                    Err(e) => {
+                        warn!(error = %e, backoff_ms, "WikiData request failed, retrying");
+                        tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
+                        backoff_ms *= 2;
+                    }
+                }
+            };
+            backoff_ms = backoff_ms.saturating_div(2).max(1000);
+
+            let resp = resp.error_for_status()?.json::<ty::SparqlResponse>().await?;
 
             let bindings = resp.results.bindings;
             let batch_len = bindings.len();
@@ -272,6 +296,28 @@ impl WikiData {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+fn load_wikidata_offset(db: &Database) -> usize {
+    let tx = db.begin_read().unwrap();
+    let table = tx.open_table(WikiData::checkpoint_table_def()).unwrap();
+    table.get("cursor".to_string()).ok().flatten().map(|v| {
+        let s = v.value();
+        serde_json::from_str::<serde_json::Value>(&s)
+            .ok()
+            .and_then(|v| v.get("offset").and_then(|v| v.as_u64()))
+            .map(|n| n as usize)
+            .unwrap_or(0)
+    }).unwrap_or(0)
+}
+
+fn save_wikidata_offset(db: &Database, offset: usize) {
+    let tx = db.begin_write().unwrap();
+    let mut table = tx.open_table(WikiData::checkpoint_table_def()).unwrap();
+    let payload = serde_json::json!({ "offset": offset }).to_string();
+    table.insert("cursor".to_string(), payload).unwrap();
+    drop(table);
+    tx.commit().unwrap();
+}
 
 /// Split a `"|"`-delimited GROUP_CONCAT value into a filtered Vec<String>.
 fn split_pipe(v: Option<ty::SparqlValue>) -> Vec<String> {

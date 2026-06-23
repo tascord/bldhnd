@@ -4,6 +4,7 @@ use {
     async_compression::tokio::bufread::XzDecoder,
     futures::StreamExt,
     redb::{Database, ReadableDatabase, ReadableTable, TableDefinition},
+    serde_json,
     std::{
         path::Path,
         sync::{Arc, LazyLock, RwLock},
@@ -37,7 +38,7 @@ impl KnowledgeBase for MusicBrainz {
     fn search(&self, q: &str, p: usize) -> anyhow::Result<Vec<Self::Output>> {
         let tx = self.db.begin_read()?;
         let idx = tx.open_table(MusicBrainz::indexes_table_def())?;
-        // Helper: simple subsequence-based fuzzy score
+
         fn score_candidate(title: &str, q: &str) -> Option<i64> {
             if q.is_empty() {
                 return Some(0);
@@ -77,35 +78,30 @@ impl KnowledgeBase for MusicBrainz {
 
         match (idx.first()?, idx.last()?) {
             (Some((lk, _)), Some((rk, _))) => {
-                // `lk` and `rk` are access guards for keys; clone their inner Strings for bounds
                 let lkey = lk.value().clone();
                 let rkey = rk.value().clone();
                 let range = idx.range(lkey..=rkey)?;
                 let mut scored: Vec<(i64, String)> = Vec::new();
 
-                // open releases table for lookups
                 let releases = tx.open_table(MusicBrainz::releases_table_def())?;
 
                 for item in range {
-                    let (k, v) = item?; // access guards for key and value
+                    let (k, v) = item?;
                     let title = k.value();
                     let ids = v.value();
                     if let Some(s) = score_candidate(&title, q) {
-                        // each id for this title inherits the same score
                         for id in ids {
                             scored.push((s, id));
                         }
                     }
                 }
 
-                // sort by score desc
                 scored.sort_by_key(|b| std::cmp::Reverse(b.0));
 
                 let offset = 50usize.saturating_mul(p);
-                let selection = scored.into_iter().skip(offset).take(50);
-
                 let mut out = Vec::new();
-                for (_score, id) in selection {
+
+                for (_score, id) in scored.into_iter().skip(offset).take(50) {
                     if let Some(val) = releases.get(&id)? {
                         let s = val.value();
                         match serde_json::from_str::<MinifiedRelease>(&s) {
@@ -130,9 +126,7 @@ impl KnowledgeBase for MusicBrainz {
             (Some((lk, _)), Some((rk, _))) => {
                 let lkey = lk.value().clone();
                 let rkey = rk.value().clone();
-                let range = idx.range(lkey..=rkey)?;
-
-                Ok(range.count())
+                Ok(idx.range(lkey..=rkey)?.count())
             }
             _ => Ok(0),
         }
@@ -145,22 +139,25 @@ impl MusicBrainz {
         let mut db = Database::create(db().join("mb.db")).expect("Failed to create MusicBrain db");
         db.compact().expect("Failed to compact mb db");
 
-        // Ensure tables exist even before we write
         let txn = db.begin_write().unwrap();
         txn.open_table(Self::releases_table_def()).unwrap();
         txn.open_table(Self::indexes_table_def()).unwrap();
+        txn.open_table(Self::checkpoint_table_def()).unwrap();
         txn.commit().unwrap();
 
         Self { latest: Arc::new(RwLock::new(['\0'; 16])), db }
     }
 
-    /// Centralized table definitions so callers don't repeat literal names/types.
     pub fn releases_table_def<'a>() -> TableDefinition<'a, String, String> {
         TableDefinition::<String, String>::new("releases")
     }
 
     pub fn indexes_table_def<'a>() -> TableDefinition<'a, String, Vec<String>> {
         TableDefinition::<String, Vec<String>>::new("indexes")
+    }
+
+    pub fn checkpoint_table_def<'a>() -> TableDefinition<'a, String, String> {
+        TableDefinition::<String, String>::new("checkpoint")
     }
 
     #[tracing::instrument(skip(self))]
@@ -193,13 +190,14 @@ impl MusicBrainz {
     #[tracing::instrument(skip(self))]
     async fn process_and_ingest(&self) -> anyhow::Result<()> {
         let latest = self.latest.read().map(|e| String::from_iter(*e)).map_err(|e| anyhow!("{e:?}"))?;
+        let cursor = load_mb_cursor(&self.db);
+
         let url = format!("https://data.metabrainz.org/pub/musicbrainz/data/json-dumps/{}/release.tar.xz", latest);
         info!(%url, "Streaming MusicBrainz release archive");
 
         let client = reqwest::Client::new();
         let res = client.get(&url).send().await?.error_for_status()?;
 
-        // Convert the response byte stream into an AsyncRead for the archive reader
         let byte_stream = res.bytes_stream().map(|b| b.map_err(std::io::Error::other));
         let stream_reader = StreamReader::new(byte_stream);
         let buf = BufReader::new(stream_reader);
@@ -222,9 +220,22 @@ impl MusicBrainz {
 
                 let mut line_reader = BufReader::new(entry).lines();
 
-                // Read lines into async batches, then open a write transaction per batch.
+                if let Some((ref tag, skip_lines)) = cursor
+                    && tag == &latest
+                    && skip_lines > 0
+                {
+                    info!(skip_lines, "Resuming: skipping already-processed lines");
+                    let mut skipped = 0usize;
+                    while line_reader.next_line().await?.is_some() {
+                        skipped += 1;
+                        if skipped >= skip_lines {
+                            break;
+                        }
+                    }
+                    info!(skipped, "Skip phase complete");
+                }
+
                 loop {
-                    // collect up to 1000 lines (awaiting here is safe)
                     let mut batch_lines: Vec<String> = Vec::with_capacity(1000);
                     for _ in 0..1000 {
                         match line_reader.next_line().await? {
@@ -237,7 +248,6 @@ impl MusicBrainz {
                         break;
                     }
 
-                    // process the batch synchronously (no .await) while holding DB guards
                     let tx = self.db.begin_write()?;
                     let mut t_data = tx.open_table(MusicBrainz::releases_table_def())?;
                     let mut t_idx = tx.open_table(MusicBrainz::indexes_table_def())?;
@@ -267,6 +277,8 @@ impl MusicBrainz {
 
                     tx.commit()?;
 
+                    save_mb_cursor(&self.db, &latest, processed);
+
                     info!("Processed {} items", processed);
                 }
 
@@ -280,4 +292,24 @@ impl MusicBrainz {
         error!(release = %latest, "No mdump/release entry found in archive");
         bail!("No release found in archive");
     }
+}
+
+fn load_mb_cursor(db: &Database) -> Option<(String, usize)> {
+    let tx = db.begin_read().ok()?;
+    let table = tx.open_table(MusicBrainz::checkpoint_table_def()).ok()?;
+    let entry = table.get("cursor".to_string()).ok()??;
+    let s = entry.value();
+    let parsed = serde_json::from_str::<serde_json::Value>(&s).ok()?;
+    let tag = parsed.get("tag")?.as_str()?.to_string();
+    let lines = parsed.get("lines")?.as_u64()? as usize;
+    Some((tag, lines))
+}
+
+fn save_mb_cursor(db: &Database, tag: &str, lines: usize) {
+    let tx = db.begin_write().unwrap();
+    let mut table = tx.open_table(MusicBrainz::checkpoint_table_def()).unwrap();
+    let payload = serde_json::json!({ "tag": tag, "lines": lines }).to_string();
+    table.insert("cursor".to_string(), payload).unwrap();
+    drop(table);
+    tx.commit().unwrap();
 }
