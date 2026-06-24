@@ -220,6 +220,7 @@ impl Model {
         }
 
         crate::ui::components::sonner::sonner().render_ref(f.area(), f.buffer_mut());
+        crate::ui::components::modal::modal().render_ref(f.area(), f.buffer_mut());
     }
 
     pub fn run(terminal: &mut DefaultTerminal) -> anyhow::Result<()> {

@@ -26,8 +26,8 @@ pub fn working() -> PathBuf {
 #[derive(Debug)]
 pub enum LibraryEvent {
     ScanStarted,
-    ScanCommpleted,
-    FoundEntry,
+    ScanCompleted,
+    FoundEntry { volume_idx: usize, path: String },
 }
 
 #[derive(Debug)]
@@ -35,6 +35,28 @@ pub enum File {
     Movie { title: String, size_gb: f32 },
     Music { title: String, size_gb: f32 },
     Series { title: String, size_gb: f32 },
+}
+
+#[derive(Debug, Clone)]
+pub struct VolumeStats {
+    pub path: PathBuf,
+    pub size_bytes: u64,
+    pub file_count: u64,
+}
+
+impl VolumeStats {
+    fn new(path: PathBuf) -> Self {
+        Self { path, size_bytes: 0, file_count: 0 }
+    }
+
+    fn add_file(&mut self, size: u64) {
+        self.size_bytes += size;
+        self.file_count += 1;
+    }
+
+    pub fn size_gb(&self) -> f32 {
+        self.size_bytes as f32 / (1024.0 * 1024.0 * 1024.0)
+    }
 }
 
 impl File {
@@ -71,6 +93,7 @@ pub struct Library {
     ev: EventTarget<LibraryEvent>,
     files: RwLock<Vec<Arc<File>>>,
     scanning: AtomicBool,
+    volume_stats: RwLock<Vec<VolumeStats>>,
 }
 
 impl Deref for Library {
@@ -85,26 +108,85 @@ impl Deref for Library {
 impl Library {
     #[allow(dead_code)]
     pub fn new() -> Self {
-        Self { scanning: AtomicBool::new(false), ev: EventTarget::new(), files: Default::default() }
+        Self {
+            scanning: AtomicBool::new(false),
+            ev: EventTarget::new(),
+            files: Default::default(),
+            volume_stats: Default::default(),
+        }
+    }
+
+    pub fn volume_stats(&self) -> Vec<VolumeStats> {
+        self.volume_stats.read().unwrap().clone()
+    }
+
+    pub fn can_download_to_volume(volume_idx: usize, size_bytes: u64) -> bool {
+        let binding = config();
+        let c = binding.read().unwrap();
+        let stats = library().read().unwrap().volume_stats();
+
+        let Some(volume) = c.volumes.get(volume_idx) else {
+            return false;
+        };
+
+        let Some(max_gb) = volume.max_size_gb else {
+            return true;
+        };
+
+        let max_bytes = (max_gb * 1024.0 * 1024.0 * 1024.0) as u64;
+        let Some(current) = stats.get(volume_idx) else {
+            return true;
+        };
+
+        current.size_bytes + size_bytes <= max_bytes
     }
 
     #[allow(dead_code)]
-    fn scan() {
-        let lock = library();
-        let lock = lock.write().unwrap();
-
-        if lock.scanning.load(SeqCst) {
+    pub fn scan(&self) {
+        if self.scanning.load(SeqCst) {
             return;
-        };
-        lock.emit(LibraryEvent::ScanStarted);
+        }
+        self.scanning.store(true, SeqCst);
+        self.ev.emit(LibraryEvent::ScanStarted);
 
-        std::thread::spawn(|| {
+        let lib = library();
+        let ev = self.ev.clone();
+
+        std::thread::spawn(move || {
             let c = config();
             let c = c.read().unwrap().clone();
 
-            for _v in c.volumes {
-                // Scan volume
+            let mut all_stats = Vec::new();
+
+            for (idx, v) in c.volumes.iter().enumerate() {
+                let mut stats = VolumeStats::new(PathBuf::from(&v.path));
+                let path = Path::new(&v.path);
+
+                if path.is_dir() {
+                    let entries = walkdir::WalkDir::new(path).into_iter().filter_map(|e| e.ok());
+                        for entry in entries {
+                            if entry.file_type().is_file() {
+                                if let Ok(metadata) = entry.metadata() {
+                                    stats.add_file(metadata.len());
+                                    ev.emit(LibraryEvent::FoundEntry {
+                                        volume_idx: idx,
+                                        path: entry.path().display().to_string(),
+                                    });
+                                }
+                            }
+                        }
+                }
+
+                all_stats.push(stats);
             }
+
+            {
+                let mut lock = lib.write().unwrap();
+                *lock.volume_stats.write().unwrap() = all_stats;
+                lock.scanning.store(false, SeqCst);
+            }
+
+            ev.emit(LibraryEvent::ScanCompleted);
         });
     }
 }

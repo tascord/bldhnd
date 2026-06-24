@@ -6,7 +6,8 @@ use {
             components::{
                 Focusable, InputEvent,
                 button::Button,
-                scroll::{ScrollText, Scroller},
+                modal::{self, ModalRequest},
+                scroll::{register_scroller_blur, register_scroller_focus, ScrollText, Scroller},
             },
             views::home::BANNER_FONT,
         },
@@ -17,7 +18,6 @@ use {
         widgets::{Paragraph, WidgetRef},
     },
     std::sync::Arc,
-    tracing::warn,
 };
 
 pub struct SettingsView {
@@ -32,29 +32,43 @@ impl SettingsView {
         let flet = figlet_rs::FIGlet::from_content(BANNER_FONT).unwrap();
         let text = flet.convert("settings").unwrap().to_string();
 
-        let c = config();
-        let _c = c.read().unwrap();
-
         let mut subs = (Vec::new(), ());
         let scroller = Scroller::new();
 
-        let c = config().read().unwrap().clone();
-        scroller.item_ref(ScrollText::new(format!("Volumes ({}): ", c.volumes.len())));
+        Self::refresh_volumes(&scroller);
 
-        let b = Button::new("Add New");
-        subs.0.push(b.on(SubscriptionPriority::Low, |ev| {
+        let add_btn = Button::new("Add New");
+        subs.0.push(add_btn.on(SubscriptionPriority::Low, |ev| {
             if let InputEvent::Submit(_) = (**ev).clone() {
-                warn!("zzz");
+                modal::modal().push(ModalRequest::VolumeAdd);
             }
         }));
 
-        scroller.item_ref(b);
+        scroller.item_ref(add_btn);
 
         let this =
-            Self { banner: text.lines().map(|l| l.to_string()).collect::<Vec<_>>(), _subs: subs, scroller: scroller.into() };
+            Self { banner: text.lines().map(|l| l.to_string()).collect::<Vec<_>>(), _subs: subs, scroller: Arc::new(scroller) };
 
         this.scroller.focus();
+        register_scroller_focus(Box::new({
+            let scroller = this.scroller.clone();
+            move || scroller.focus()
+        }));
+        register_scroller_blur(Box::new({
+            let scroller = this.scroller.clone();
+            move || scroller.blur()
+        }));
         this
+    }
+
+    fn refresh_volumes(scroller: &Scroller) {
+        let c = config().read().unwrap().clone();
+        scroller.item_ref(ScrollText::new(format!("Volumes ({}): ", c.volumes.len())));
+
+        for (i, v) in c.volumes.iter().enumerate() {
+            let label = format!("[{}] {} ({}) - {:?}", i + 1, v.name, v.path, v.max_size_gb);
+            scroller.item_ref(ScrollText::new(label));
+        }
     }
 }
 
@@ -69,10 +83,8 @@ impl WidgetRef for SettingsView {
             Layout::vertical([Constraint::Length(text.height() as u16), Constraint::Length(3), Constraint::Fill(1)])
                 .split(area);
 
-        // Title
         Paragraph::new(text).render(layout[0], buf);
 
-        // Rule
         Paragraph::new(Text::from_iter([
             Line::raw(""),
             Line::styled(
@@ -83,7 +95,6 @@ impl WidgetRef for SettingsView {
         ]))
         .render(layout[1], buf);
 
-        // Library
         self.scroller.render_ref(layout[2], buf);
     }
 }

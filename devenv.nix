@@ -1,8 +1,13 @@
-{ pkgs, ... }: 
+{ pkgs, ... }:
 
-{ 
+{
 
-  packages = [ pkgs.git pkgs.rustup pkgs.openssl ];
+  packages = [
+    pkgs.git
+    pkgs.rustup
+    pkgs.openssl
+    pkgs.gcc
+  ];
 
   languages.rust = {
     enable = true;

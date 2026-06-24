@@ -50,6 +50,19 @@ impl Config {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Volume {
-    priority: u8,
-    path: String,
+    pub name: String,
+    pub path: String,
+    pub priority: u8,
+    pub max_size_gb: Option<f32>,
+}
+
+impl Volume {
+    pub fn new(name: impl Into<String>, path: impl Into<String>, priority: u8) -> Self {
+        Self { name: name.into(), path: path.into(), priority, max_size_gb: None }
+    }
+
+    pub fn with_max_size(mut self, max_size_gb: f32) -> Self {
+        self.max_size_gb = Some(max_size_gb);
+        self
+    }
 }

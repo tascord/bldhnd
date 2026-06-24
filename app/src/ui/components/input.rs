@@ -265,6 +265,15 @@ impl Input {
     pub fn load(&self, v: bool) {
         self.loading.store(v, SeqCst);
     }
+
+    pub fn set_text(&self, text: &str) {
+        *self.text.write().unwrap() = text.to_string();
+        *self.cursor.write().unwrap() = Cursor::collapse(text.len());
+    }
+
+    pub fn get_text(&self) -> String {
+        self.text.read().unwrap().clone()
+    }
 }
 
 impl Focusable for Input {

@@ -75,14 +75,15 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    spawn(async {
-        let c = mb::client();
-        let _ = c.fetch().await.inspect_err(|e| warn!("{e:?}"));
+    let mb = mb::client();
+    let wd = wikidata::client();
+
+    spawn(async move {
+        let _ = mb.fetch().await.inspect_err(|e| warn!("{e:?}"));
     });
 
-    spawn(async {
-        let c = wikidata::client();
-        let _ = c.fetch().await.inspect_err(|e| warn!("{e:?}"));
+    spawn(async move {
+        let _ = wd.fetch().await.inspect_err(|e| warn!("{e:?}"));
     });
 
     let sock = SocketAddr::new(

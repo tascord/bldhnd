@@ -20,6 +20,41 @@ use {
     },
 };
 
+static CURRENT_SCROLLER: std::sync::LazyLock<Arc<AtomicBool>> =
+    std::sync::LazyLock::new(|| Arc::new(AtomicBool::new(false)));
+
+static CURRENT_SCROLLER_BLUR: std::sync::LazyLock<Arc<RwLock<Option<Box<dyn Fn() + Send + Sync>>>>> =
+    std::sync::LazyLock::new(|| Arc::new(RwLock::new(None)));
+
+static CURRENT_SCROLLER_FOCUS: std::sync::LazyLock<Arc<RwLock<Option<Box<dyn Fn() + Send + Sync>>>>> =
+    std::sync::LazyLock::new(|| Arc::new(RwLock::new(None)));
+
+pub fn is_scroller_focused() -> bool {
+    CURRENT_SCROLLER.load(SeqCst)
+}
+
+pub fn register_scroller_blur(callback: Box<dyn Fn() + Send + Sync>) {
+    *CURRENT_SCROLLER_BLUR.write().unwrap() = Some(callback);
+}
+
+pub fn register_scroller_focus(callback: Box<dyn Fn() + Send + Sync>) {
+    *CURRENT_SCROLLER_FOCUS.write().unwrap() = Some(callback);
+}
+
+pub fn blur_current_scroller() {
+    CURRENT_SCROLLER.store(false, SeqCst);
+    if let Some(cb) = CURRENT_SCROLLER_BLUR.read().unwrap().as_ref() {
+        cb();
+    }
+}
+
+pub fn focus_current_scroller() {
+    CURRENT_SCROLLER.store(true, SeqCst);
+    if let Some(cb) = CURRENT_SCROLLER_FOCUS.read().unwrap().as_ref() {
+        cb();
+    }
+}
+
 pub trait ScrollItem: WidgetRef + Focusable {
     fn height(&self) -> u16;
     fn width(&self) -> u16;
@@ -236,11 +271,13 @@ impl Scroller {
 impl Focusable for Scroller {
     fn focus(&self) {
         self.focused.store(true, SeqCst);
+        CURRENT_SCROLLER.store(true, SeqCst);
         self.ev.emit(InputEvent::Focus);
     }
 
     fn blur(&self) {
         self.focused.store(false, SeqCst);
+        CURRENT_SCROLLER.store(false, SeqCst);
         self.ev.emit(InputEvent::Blur);
     }
 }
