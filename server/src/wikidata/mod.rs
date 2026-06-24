@@ -86,10 +86,10 @@ impl KnowledgeBase for WikiData {
 impl WikiData {
     pub fn new() -> Self {
         let db_path = db().join("wikidata.db");
-        let mut db = Database::create(&db_path).unwrap_or_else(|e| {
+        let db = Database::create(&db_path).unwrap_or_else(|e| {
             panic!("Failed to create WikiData db at {}: {e} (check disk space and permissions)", db_path.display())
         });
-        db.compact().expect("Failed to compact WikiData db");
+        
 
         let txn = db.begin_write().unwrap();
         txn.open_table(Self::items_table_def()).unwrap();

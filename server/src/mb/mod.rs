@@ -91,8 +91,7 @@ impl KnowledgeBase for MusicBrainz {
 #[allow(clippy::new_without_default)]
 impl MusicBrainz {
     pub fn new() -> Self {
-        let mut db = Database::create(db().join("mb.db")).expect("Failed to create MusicBrain db");
-        db.compact().expect("Failed to compact mb db");
+        let db = Database::create(db().join("mb.db")).expect("Failed to create MusicBrain db");
 
         let txn = db.begin_write().unwrap();
         txn.open_table(Self::releases_table_def()).unwrap();
