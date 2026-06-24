@@ -1577,9 +1577,9 @@ dependencies = [
 
 [[package]]
 name = "milrouter"
-version = "1.0.1"
+version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd45723583d55845937b78893d0554a114b2b33801409d3be02d05a8859be2a9"
+checksum = "1902cabcb0084cbe2770184d69feb5f6b4d81b6f2608c2e189bda262237856bb"
 dependencies = [
  "anyhow",
  "async_fn_traits",
@@ -1605,9 +1605,9 @@ dependencies = [
 
 [[package]]
 name = "milrouter_macros"
-version = "1.0.1"
+version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5047fca307a869a933877b2af4856fd129eba877d071e061ec16a23b93c8d62a"
+checksum = "b5cd61e39f4107643a1eec6910ca7d6b0ccb1150d7775b4027ea3ab931ab2587"
 dependencies = [
  "anyhow",
  "heck",
