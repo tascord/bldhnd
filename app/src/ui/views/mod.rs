@@ -4,19 +4,13 @@ use {
         ui::views::{home::HomeView, library::LibraryView, logs::LogsView, search::SearchView, settings::SettingsView},
     },
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
-    ratatui::{
-        DefaultTerminal, Frame,
-        prelude::*,
-        style::Color::{Black, White},
-        widgets::{Block, BorderType, Borders, Paragraph, WidgetRef},
-    },
+    futures_signals::signal::Mutable,
+    ratatui::{DefaultTerminal, Frame, prelude::*, widgets::WidgetRef},
     std::{
-        sync::{
-            Arc, LazyLock, Mutex,
-            atomic::{AtomicBool, Ordering::SeqCst},
-        },
+        sync::{Arc, LazyLock},
         time::Duration,
     },
+    unicode_width::UnicodeWidthStr,
 };
 
 pub mod home;
@@ -28,9 +22,7 @@ pub mod settings;
 
 static MODEL: LazyLock<Arc<Model>> = LazyLock::new(|| Arc::new(Model::new()));
 
-pub fn model() -> Arc<Model> {
-    MODEL.clone()
-}
+pub fn model() -> Arc<Model> { MODEL.clone() }
 
 pub fn vstack(c: &[u16], a: Rect) -> Vec<Rect> {
     let mut cons = Vec::new();
@@ -81,9 +73,9 @@ pub fn hcenter(l: u16, a: Rect) -> Rect {
 }
 
 pub struct Model {
-    pub exit: AtomicBool,
+    pub exit: Mutable<bool>,
     pub target: EventTarget<ModelEvent>,
-    pub view: Mutex<Option<ModelView>>,
+    pub view: Mutable<Option<ModelView>>,
 }
 
 #[derive(Debug)]
@@ -100,9 +92,7 @@ pub enum ModelView {
 }
 
 impl Default for ModelView {
-    fn default() -> Self {
-        ModelView::Home(HomeView::new())
-    }
+    fn default() -> Self { ModelView::Home(HomeView::new()) }
 }
 
 impl ModelView {
@@ -129,24 +119,24 @@ impl ModelView {
     pub fn key(k: KeyCode) {
         let ex = {
             let m = model();
-            m.view.lock().unwrap().as_ref().map(|v| v.n()).unwrap_or_default()
+            m.view.lock_ref().as_ref().map(|v| v.n()).unwrap_or_default()
         };
 
         match k {
             KeyCode::Char('1') if ex != 1 => {
-                *model().view.lock().unwrap() = Some(ModelView::Home(HomeView::new()));
+                model().view.set(Some(ModelView::Home(HomeView::new())));
             }
             KeyCode::Char('2') if ex != 2 => {
-                *model().view.lock().unwrap() = Some(ModelView::Search(SearchView::new()));
+                model().view.set(Some(ModelView::Search(SearchView::new())));
             }
             KeyCode::Char('3') if ex != 3 => {
-                *model().view.lock().unwrap() = Some(ModelView::Library(LibraryView::new()));
+                model().view.set(Some(ModelView::Library(LibraryView::new())));
             }
             KeyCode::Char('4') if ex != 4 => {
-                *model().view.lock().unwrap() = Some(ModelView::Settings(SettingsView::new()));
+                model().view.set(Some(ModelView::Settings(SettingsView::new())));
             }
             KeyCode::Char('5') if ex != 5 => {
-                *model().view.lock().unwrap() = Some(ModelView::Logs(LogsView::new()));
+                model().view.set(Some(ModelView::Logs(LogsView::new())));
             }
             _ => {}
         }
@@ -166,13 +156,13 @@ impl ModelView {
 #[allow(clippy::new_without_default)]
 impl Model {
     pub fn new() -> Self {
-        let m = Model { exit: AtomicBool::new(false), target: EventTarget::new(), view: Default::default() };
+        let m = Model { exit: Mutable::new(false), target: EventTarget::new(), view: Mutable::new(None) };
 
         m.target
             .on(SubscriptionPriority::Low, |v| {
                 let ModelEvent::KeyPress(ev) = **v;
                 if ev.code == KeyCode::Char('q') || ev.code == KeyCode::Char('Q') {
-                    return model().exit.store(true, SeqCst);
+                    model().exit.set(true);
                 }
 
                 ModelView::key(ev.code);
@@ -183,61 +173,86 @@ impl Model {
     }
 
     pub fn draw(&self, f: &mut Frame) {
-        Block::new()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .render(f.area().inner(Margin::new(1, 1)), f.buffer_mut());
+        let area = f.area();
 
-        let sel = self.view.lock().unwrap().as_ref().map(|v| v.n()).unwrap_or_default();
+        let content_area = Rect {
+            x: area.x + 1,
+            y: area.y + 2,
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(3),
+        };
 
-        let mut x = 0;
-        for tab in ModelView::list() {
-            let text = format!("{} ({})", tab.0, tab.1);
-            let text = Line::from_iter([
-                Span::raw("| "),
-                Span::styled(
-                    text,
-                    match sel == tab.1 {
-                        true => Style::new().bg(White).fg(Black),
-                        false => Style::new(),
-                    },
-                ),
-                Span::raw(" |"),
-            ]);
-
-            Paragraph::new(text.to_string())
-                .render(Rect { x: x + 3, y: 1, width: text.width() as u16, height: 1 }, f.buffer_mut());
-            x += (text.width() as u16) + 1;
+        for x in (area.x + 1)..area.right().saturating_sub(1) {
+            f.buffer_mut()[(x, area.y + 1)].set_char('─');
         }
 
-        let mut lock = self.view.lock().unwrap();
-        if lock.is_none() {
-            *lock = Some(ModelView::Home(HomeView::new()));
+        let sel = self.view.lock_ref().as_ref().map(|v| v.n()).unwrap_or_default();
+
+        let tabs = ModelView::list();
+        let max_tab_width = (area.width.saturating_sub(3)) / 2;
+        let mut x = area.x + 2;
+
+        for (i, tab) in tabs.iter().enumerate() {
+            let is_selected = sel == tab.1;
+            let raw_text = format!("{} ", tab.0);
+            let text = if raw_text.width() > max_tab_width as usize {
+                raw_text[..raw_text.char_indices().nth(max_tab_width as usize - 1).map(|(i, _)| i).unwrap_or(raw_text.len())]
+                    .to_string()
+            } else {
+                raw_text.clone()
+            };
+
+            let left_char = if i == 0 { "├" } else { "┼" };
+            let right_char = if i == tabs.len() - 1 { "┤" } else { "┼" };
+            let separator = if is_selected { "┬" } else { "┼" };
+
+            let line = if is_selected {
+                Line::from(vec![
+                    Span::raw(left_char),
+                    Span::styled(format!(" {} ", text), Style::new().fg(Color::Cyan)),
+                    Span::raw(separator),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::raw(left_char),
+                    Span::styled(format!(" {} ", text), Style::new()),
+                    Span::raw(right_char),
+                ])
+            };
+
+            let width = text.width() + 4;
+            if x + (width as u16) < area.right().saturating_sub(1) {
+                line.render(Rect { x, y: area.y + 1, width: width as u16, height: 1 }, f.buffer_mut());
+            }
+            x += width as u16;
         }
 
-        if let Some(l) = lock.as_ref() {
-            l.render(f.area().inner(Margin::new(4, 3)), f.buffer_mut())
+        let view_lock = self.view.lock_ref();
+        if view_lock.is_none() {
+            self.view.set(Some(ModelView::Home(HomeView::new())));
         }
 
-        crate::ui::components::sonner::sonner().render_ref(f.area(), f.buffer_mut());
-        crate::ui::components::modal::modal().render_ref(f.area(), f.buffer_mut());
+        if let Some(l) = view_lock.as_ref() {
+            l.render(content_area, f.buffer_mut())
+        }
+
+        crate::ui::components::sonner::sonner().render_ref(area, f.buffer_mut());
+        crate::ui::components::modal::modal().render_ref(area, f.buffer_mut());
     }
 
     pub fn run(terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
         crate::logs::install_tracing();
 
         loop {
-            // Draw while holding a short-lived read lock, then drop it before polling/input handling.
             let target_clone: EventTarget<ModelEvent>;
             let s = model();
-            if s.exit.load(SeqCst) {
+            if s.exit.get() {
                 break;
             }
 
             terminal.draw(|frame| s.draw(frame))?;
             target_clone = s.target.clone();
 
-            // Poll for events with a short timeout so the UI can redraw periodically
             if event::poll(Duration::from_millis(200))? {
                 match event::read()? {
                     Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {

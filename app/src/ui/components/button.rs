@@ -7,6 +7,7 @@ use {
         },
     },
     crossterm::event::KeyCode,
+    futures_signals::signal::Mutable,
     ratatui::{
         layout::Alignment,
         style::Style,
@@ -15,15 +16,11 @@ use {
     std::{
         fmt::Display,
         ops::Deref,
-        sync::{
-            Arc,
-            atomic::{AtomicBool, Ordering::SeqCst},
-        },
     },
 };
 
 pub struct Button {
-    focused: Arc<AtomicBool>,
+    focused: Mutable<bool>,
     label: String,
     subs: Option<[SubscriptionHandle<ModelEvent>; 1]>,
     ev: EventTarget<InputEvent<()>>,
@@ -50,7 +47,7 @@ impl Deref for Button {
 impl Button {
     pub fn new(label: impl Display) -> Self {
         let mut this = Self {
-            focused: Arc::new(AtomicBool::new(false)),
+            focused: Mutable::new(false),
             label: label.to_string(),
             ev: EventTarget::new(),
             subs: Option::None,
@@ -62,11 +59,11 @@ impl Button {
 
             move |ev| {
                 let ModelEvent::KeyPress(key_event) = **ev;
-                if focused.load(SeqCst) {
+                if focused.get() {
                     match key_event.code {
                         KeyCode::Tab | KeyCode::Esc => {
                             evt.emit(InputEvent::Blur);
-                            focused.store(false, SeqCst);
+                            focused.set(false);
                         }
 
                         KeyCode::Enter => {
@@ -90,12 +87,12 @@ impl Button {
 
 impl Focusable for Button {
     fn focus(&self) {
-        self.focused.store(true, SeqCst);
+        self.focused.set(true);
         self.ev.emit(InputEvent::Focus);
     }
 
     fn blur(&self) {
-        self.focused.store(false, SeqCst);
+        self.focused.set(false);
         self.ev.emit(InputEvent::Blur);
     }
 }
@@ -105,7 +102,7 @@ impl WidgetRef for Button {
         Paragraph::new(self.label.clone())
             .alignment(Alignment::Center)
             .block(Block::new().border_type(BorderType::Rounded).borders(Borders::ALL).border_style(
-                match self.focused.load(SeqCst) {
+                match self.focused.get() {
                     true => Style::new().white(),
                     false => Style::new().gray(),
                 },

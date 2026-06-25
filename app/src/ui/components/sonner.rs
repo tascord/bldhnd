@@ -1,4 +1,5 @@
 use {
+    futures_signals::signal::Mutable,
     ratatui::{
         prelude::*,
         style::{Color, Style},
@@ -6,10 +7,7 @@ use {
     },
     std::{
         fmt::Display,
-        sync::{
-            Arc, LazyLock, RwLock,
-            atomic::{AtomicU64, Ordering::SeqCst},
-        },
+        sync::{Arc, LazyLock},
         time::{Duration, Instant},
     },
     tracing::{
@@ -68,8 +66,8 @@ impl Toast {
 }
 
 pub struct Sonner {
-    queue: RwLock<Vec<Toast>>,
-    next_id: AtomicU64,
+    queue: Mutable<Vec<Toast>>,
+    next_id: Mutable<u64>,
     max_visible: usize,
     max_queued: usize,
 }
@@ -82,7 +80,12 @@ pub fn sonner() -> Arc<Sonner> {
 
 impl Sonner {
     fn new(max_visible: usize, max_queued: usize) -> Self {
-        Self { queue: RwLock::new(Vec::new()), next_id: AtomicU64::new(0), max_visible, max_queued }
+        Self {
+            queue: Mutable::new(Vec::new()),
+            next_id: Mutable::new(0),
+            max_visible,
+            max_queued,
+        }
     }
 
     pub fn push(&self, level: ToastLevel, message: impl Display) -> u64 {
@@ -90,9 +93,10 @@ impl Sonner {
     }
 
     pub fn push_for(&self, level: ToastLevel, message: impl Display, duration: Duration) -> u64 {
-        let id = self.next_id.fetch_add(1, SeqCst);
+        let id = self.next_id.get();
+        self.next_id.set(id + 1);
 
-        let mut q = self.queue.write().unwrap();
+        let mut q = self.queue.lock_mut();
         q.push(Toast { id, level, message: message.to_string(), created: Instant::now(), duration });
 
         while q.len() > self.max_queued {
@@ -115,15 +119,15 @@ impl Sonner {
     }
 
     pub fn dismiss(&self, id: u64) {
-        self.queue.write().unwrap().retain(|t| t.id != id);
+        self.queue.lock_mut().retain(|t| t.id != id);
     }
 
     pub fn clear(&self) {
-        self.queue.write().unwrap().clear();
+        self.queue.lock_mut().clear();
     }
 
     fn gc(&self) {
-        self.queue.write().unwrap().retain(|t| !t.expired());
+        self.queue.lock_mut().retain(|t| !t.expired());
     }
 }
 
@@ -136,9 +140,7 @@ impl WidgetRef for Sonner {
         }
 
         let visible: Vec<Toast> = {
-            let q = self.queue.read().unwrap();
-
-            q.iter().rev().take(self.max_visible).cloned().collect()
+            self.queue.get_cloned().iter().rev().take(self.max_visible).cloned().collect()
         };
 
         if visible.is_empty() {

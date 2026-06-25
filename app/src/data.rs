@@ -22,6 +22,20 @@ pub struct SearchResult {
     pub size_gb: f32,
 }
 
+impl SearchResult {
+    pub fn gb_fmt(&self) -> String { format!("{:.1}Gb", self.size_gb) }
+
+    pub fn rel_fmt(&self) -> String { self.release.format("%b %G").to_string() }
+
+    pub fn ty_fmt(&self) -> String {
+        match self.ty.as_str() {
+            "Music" => "♫ Music",
+            oth => oth,
+        }
+        .to_string()
+    }
+}
+
 // =========================================================
 // Simple TTL Cache
 // =========================================================
@@ -43,9 +57,7 @@ where
     K: std::hash::Hash + Eq + Clone,
     V: Clone,
 {
-    pub fn new(ttl: Duration) -> Self {
-        Self { inner: DashMap::new(), ttl }
-    }
+    pub fn new(ttl: Duration) -> Self { Self { inner: DashMap::new(), ttl } }
 
     pub fn get(&self, key: &K) -> Option<V> {
         let entry = self.inner.get(key)?;
@@ -70,9 +82,7 @@ static DATA_CLIENT: LazyLock<Arc<RouterClient>> = LazyLock::new(|| {
     .into()
 });
 
-pub fn data() -> Arc<RouterClient> {
-    DATA_CLIENT.clone()
-}
+pub fn data() -> Arc<RouterClient> { DATA_CLIENT.clone() }
 
 impl From<MinifiedRelease> for SearchResult {
     fn from(value: MinifiedRelease) -> Self {

@@ -3,17 +3,15 @@ use std::{
     fs::create_dir_all,
     ops::Deref,
     path::{Path, PathBuf},
-    sync::{
-        Arc, LazyLock, RwLock,
-        atomic::{AtomicBool, Ordering::SeqCst},
-    },
+    sync::{Arc, LazyLock},
 };
 
 use crate::{config, events::EventTarget};
+use futures_signals::signal::Mutable;
 
-static LIBRARY: LazyLock<Arc<RwLock<Library>>> = LazyLock::new(|| Arc::new(RwLock::new(Library::new())));
+static LIBRARY: LazyLock<Arc<Library>> = LazyLock::new(|| Arc::new(Library::new()));
 
-pub fn library() -> Arc<RwLock<Library>> {
+pub fn library() -> Arc<Library> {
     LIBRARY.clone()
 }
 
@@ -91,9 +89,9 @@ impl File {
 #[allow(dead_code)]
 pub struct Library {
     ev: EventTarget<LibraryEvent>,
-    files: RwLock<Vec<Arc<File>>>,
-    scanning: AtomicBool,
-    volume_stats: RwLock<Vec<VolumeStats>>,
+    files: Mutable<Vec<Arc<File>>>,
+    scanning: Mutable<bool>,
+    volume_stats: Mutable<Vec<VolumeStats>>,
 }
 
 impl Deref for Library {
@@ -109,21 +107,21 @@ impl Library {
     #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
-            scanning: AtomicBool::new(false),
+            scanning: Mutable::new(false),
             ev: EventTarget::new(),
-            files: Default::default(),
-            volume_stats: Default::default(),
+            files: Mutable::new(Vec::new()),
+            volume_stats: Mutable::new(Vec::new()),
         }
     }
 
     pub fn volume_stats(&self) -> Vec<VolumeStats> {
-        self.volume_stats.read().unwrap().clone()
+        self.volume_stats.lock_ref().clone()
     }
 
     pub fn can_download_to_volume(volume_idx: usize, size_bytes: u64) -> bool {
         let binding = config();
-        let c = binding.read().unwrap();
-        let stats = library().read().unwrap().volume_stats();
+        let c = binding.lock_ref();
+        let stats = library().volume_stats();
 
         let Some(volume) = c.volumes.get(volume_idx) else {
             return false;
@@ -143,18 +141,17 @@ impl Library {
 
     #[allow(dead_code)]
     pub fn scan(&self) {
-        if self.scanning.load(SeqCst) {
+        if self.scanning.get() {
             return;
         }
-        self.scanning.store(true, SeqCst);
+        self.scanning.set(true);
         self.ev.emit(LibraryEvent::ScanStarted);
 
         let lib = library();
         let ev = self.ev.clone();
 
         std::thread::spawn(move || {
-            let c = config();
-            let c = c.read().unwrap().clone();
+            let c = config().get_cloned();
 
             let mut all_stats = Vec::new();
 
@@ -181,9 +178,8 @@ impl Library {
             }
 
             {
-                let mut lock = lib.write().unwrap();
-                *lock.volume_stats.write().unwrap() = all_stats;
-                lock.scanning.store(false, SeqCst);
+                lib.volume_stats.set(all_stats);
+                lib.scanning.set(false);
             }
 
             ev.emit(LibraryEvent::ScanCompleted);

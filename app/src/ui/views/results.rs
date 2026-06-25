@@ -1,32 +1,23 @@
-use std::{
-    fmt::Display,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering::SeqCst},
-    },
-};
-
-use crossterm::event::KeyCode;
-
-use crate::{
-    data::SearchResult,
-    events::{SubscriptionHandle, SubscriptionPriority},
-    ui::{
-        components::{
-            Focusable,
-            scroll::{ScrollItem, Scroller},
-        },
-        views::{ModelEvent, model},
-    },
-};
-
 use {
-    crate::ui::views::home::BANNER_FONT,
+    crate::{
+        data::SearchResult,
+        events::{SubscriptionHandle, SubscriptionPriority},
+        ui::{
+            components::{
+                Focusable,
+                scroll::{ScrollItem, Scroller},
+            },
+            views::{ModelEvent, home::BANNER_FONT, model},
+        },
+    },
+    crossterm::event::KeyCode,
+    futures_signals::signal::Mutable,
     ratatui::{
         layout::Constraint,
         prelude::*,
-        widgets::{Paragraph, WidgetRef},
+        widgets::{Block, Paragraph, WidgetRef},
     },
+    std::sync::Arc,
 };
 
 pub struct ResultsView {
@@ -34,80 +25,51 @@ pub struct ResultsView {
     scroller: Arc<Scroller>,
     _subs: SubscriptionHandle<ModelEvent>,
 }
-pub fn around<'a, T: Display>(s: impl IntoIterator<Item = T>, a: Rect) -> Line<'a> {
-    let parts: Vec<String> = s.into_iter().map(|v| v.to_string()).collect();
-    if parts.is_empty() {
-        return Line::from("");
-    }
 
-    let total_len: usize = parts.iter().map(|p| p.len()).sum();
-    let width = a.width as usize;
-
-    if width <= total_len || parts.len() == 1 {
-        return Line::from_iter(parts.into_iter().map(Span::raw));
-    }
-
-    let gaps = parts.len().saturating_sub(1);
-    let extra = width.saturating_sub(total_len);
-    let base = extra / gaps;
-    let mut rem = extra % gaps;
-
-    let mut spans = Vec::with_capacity(parts.len() + gaps);
-    for (i, part) in parts.into_iter().enumerate() {
-        spans.push(Span::raw(part));
-        if i < gaps {
-            let n = if rem > 0 {
-                rem -= 1;
-                base + 1
-            } else {
-                base
-            };
-            spans.push(Span::raw(" ".repeat(n)));
-        }
-    }
-
-    Line::from_iter(spans)
+pub struct SearchItem(SearchResult, Mutable<bool>);
+impl SearchItem {
+    pub fn new(s: SearchResult) -> Self { Self(s, Mutable::new(false)) }
 }
 
-pub struct SearchItem(SearchResult, Arc<AtomicBool>);
-impl SearchItem {
-    pub fn new(s: SearchResult) -> Self {
-        Self(s, AtomicBool::new(false).into())
-    }
+fn res_line(area: Rect, buf: &mut Buffer, ofs: u16, s: Style, l: (&str, &str)) {
+    let l = (l.0.trim(), l.1.trim());
+
+    let w = Layout::new(Direction::Horizontal, [
+        Constraint::Length(l.0.len() as u16),
+        Constraint::Fill(1),
+        Constraint::Length(l.1.len() as u16),
+    ])
+    .split(area)[1]
+        .width;
+
+    Line::from_iter([Span::styled(l.0, s), Span::raw(" ".repeat(w as usize)), Span::styled(l.1, s)])
+        .render(Rect { x: area.x, y: area.top() + ofs, width: area.width, height: area.height }, buf);
 }
 
 impl WidgetRef for SearchItem {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        let l1 = [self.0.name.clone(), self.0.release.to_string()];
-        let l2 = [self.0.ty.clone(), self.0.size_gb.to_string()];
+        let focused = self.1.get();
+        let s = match focused {
+            true => Style::new().on_white().black(),
+            false => Style::new(),
+        };
 
-        Paragraph::new(Text::from_iter([around(l1, area), around(l2, area)].into_iter().flatten()))
-            .style(match self.1.load(SeqCst) {
-                true => Style::new().on_white().black(),
-                false => Style::new(),
-            })
-            .render(area, buf);
+        Block::new().style(s).render(area, buf);
+        res_line(area, buf, 0, s, (&self.0.name, &self.0.rel_fmt()));
+        res_line(area, buf, 1, s, (&self.0.ty_fmt(), &self.0.gb_fmt()));
     }
 }
 
 impl Focusable for SearchItem {
-    fn focus(&self) {
-        self.1.store(true, SeqCst);
-    }
+    fn focus(&self) { self.1.set(true); }
 
-    fn blur(&self) {
-        self.1.store(false, SeqCst);
-    }
+    fn blur(&self) { self.1.set(false); }
 }
 
 impl ScrollItem for SearchItem {
-    fn height(&self) -> u16 {
-        2
-    }
+    fn height(&self) -> u16 { 2 }
 
-    fn width(&self) -> u16 {
-        0
-    }
+    fn width(&self) -> u16 { 0 }
 }
 
 #[allow(clippy::new_without_default)]
@@ -146,10 +108,8 @@ impl WidgetRef for ResultsView {
             Layout::vertical([Constraint::Length(text.height() as u16), Constraint::Length(3), Constraint::Fill(1)])
                 .split(area);
 
-        // Title
         Paragraph::new(text).render(layout[0], buf);
 
-        // Rule
         Paragraph::new(Text::from_iter([
             Line::raw(""),
             Line::styled(
@@ -160,7 +120,6 @@ impl WidgetRef for ResultsView {
         ]))
         .render(layout[1], buf);
 
-        // Library
         self.scroller.render_ref(layout[2], buf);
     }
 }

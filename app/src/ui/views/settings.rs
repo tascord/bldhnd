@@ -6,8 +6,8 @@ use {
             components::{
                 Focusable, InputEvent,
                 button::Button,
-                modal::{self, ModalRequest},
-                scroll::{register_scroller_blur, register_scroller_focus, ScrollText, Scroller},
+                modal::{self, Modal},
+                scroll::{ScrollText, Scroller, register_scroller_blur, register_scroller_focus},
             },
             views::home::BANNER_FONT,
         },
@@ -36,18 +36,32 @@ impl SettingsView {
         let scroller = Scroller::new();
 
         Self::refresh_volumes(&scroller);
+        let scroller = Arc::new(scroller);
 
         let add_btn = Button::new("Add New");
-        subs.0.push(add_btn.on(SubscriptionPriority::Low, |ev| {
-            if let InputEvent::Submit(_) = (**ev).clone() {
-                modal::modal().push(ModalRequest::VolumeAdd);
+        subs.0.push(add_btn.on(SubscriptionPriority::Low, {
+            let scroller = scroller.clone();
+            move |ev| {
+                if let InputEvent::Submit(_) = (**ev).clone() {
+                    let m = Modal::new("Add new Volume", Scroller::new());
+                    m.on(SubscriptionPriority::Low, {
+                        let scroller = scroller.clone();
+                        move |ev| {
+                            if let InputEvent::Blur = (**ev).clone() {
+                                scroller.focus()
+                            }
+                        }
+                    });
+
+                    modal::modal().push(m);
+                    scroller.blur();
+                }
             }
         }));
 
         scroller.item_ref(add_btn);
 
-        let this =
-            Self { banner: text.lines().map(|l| l.to_string()).collect::<Vec<_>>(), _subs: subs, scroller: Arc::new(scroller) };
+        let this = Self { banner: text.lines().map(|l| l.to_string()).collect::<Vec<_>>(), _subs: subs, scroller };
 
         this.scroller.focus();
         register_scroller_focus(Box::new({
@@ -62,7 +76,7 @@ impl SettingsView {
     }
 
     fn refresh_volumes(scroller: &Scroller) {
-        let c = config().read().unwrap().clone();
+        let c = config().get_cloned();
         scroller.item_ref(ScrollText::new(format!("Volumes ({}): ", c.volumes.len())));
 
         for (i, v) in c.volumes.iter().enumerate() {

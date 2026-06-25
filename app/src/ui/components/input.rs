@@ -7,6 +7,7 @@ use {
         },
     },
     crossterm::event::{KeyCode, KeyModifiers},
+    futures_signals::signal::Mutable,
     ratatui::{
         style::{Color::White, Style},
         text::{Line, Span},
@@ -15,10 +16,6 @@ use {
     std::{
         fmt::Display,
         ops::Deref,
-        sync::{
-            Arc, RwLock,
-            atomic::{AtomicBool, Ordering::SeqCst},
-        },
         time::Instant,
     },
 };
@@ -46,12 +43,10 @@ impl Cursor {
         self.caret.max(self.anchor)
     }
 
-    /// Collapse selection: caret and anchor both land on `pos`.
     fn collapse(pos: usize) -> Self {
         Self::point(pos)
     }
 
-    /// Extend selection: caret moves to `pos`, anchor stays.
     fn extend(self, pos: usize) -> Self {
         Self { caret: pos, anchor: self.anchor }
     }
@@ -61,10 +56,10 @@ const SPINNER_FRAMES: [&str; 4] = ["◜", "◝", "◞", "◟"];
 const SPINNER_INTERVAL_MS: u128 = 30;
 
 pub struct Input {
-    focused: Arc<AtomicBool>,
-    text: Arc<RwLock<String>>,
-    cursor: Arc<RwLock<Cursor>>,
-    loading: Arc<AtomicBool>,
+    focused: Mutable<bool>,
+    text: Mutable<String>,
+    cursor: Mutable<Cursor>,
+    loading: Mutable<bool>,
     label: String,
     ts: Instant,
     subs: Option<[SubscriptionHandle<ModelEvent>; 1]>,
@@ -92,14 +87,14 @@ impl Deref for Input {
 impl Input {
     pub fn new(label: impl Display, default_value: impl Display) -> Self {
         let mut this = Self {
-            focused: Arc::new(AtomicBool::new(false)),
-            text: Arc::new(default_value.to_string().into()),
-            cursor: Arc::new(Cursor::point(0).into()),
+            focused: Mutable::new(false),
+            text: Mutable::new(default_value.to_string()),
+            cursor: Mutable::new(Cursor::point(0)),
             label: label.to_string(),
             ts: Instant::now(),
             subs: None,
             ev: EventTarget::new(),
-            loading: AtomicBool::new(false).into(),
+            loading: Mutable::new(false),
         };
 
         let sub = model().target.on(SubscriptionPriority::High, {
@@ -111,14 +106,12 @@ impl Input {
 
             move |ev| {
                 let ModelEvent::KeyPress(key_event) = **ev;
-                if focused.load(SeqCst) && !loading.load(SeqCst) {
+                if focused.get() && !loading.get() {
                     let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
                     let shft = key_event.modifiers.contains(KeyModifiers::SHIFT);
 
-                    // Clone out immediately and drop the read guards before any writes.
-                    let mut txt: String = text.read().unwrap().clone();
-                    let mut cur: Cursor = *cursor.read().unwrap();
-                    // Both read guards are now dropped — temporaries are gone.
+                    let mut txt: String = text.get_cloned();
+                    let mut cur: Cursor = cursor.get();
 
                     let prev_word = |pos: usize| -> usize {
                         let chars: Vec<char> = txt.chars().collect();
@@ -144,7 +137,7 @@ impl Input {
                         i
                     };
 
-                    let len = txt.chars().count(); // ← char count, not byte count
+                    let len = txt.chars().count();
 
                     match key_event.code {
                         KeyCode::Backspace if ctrl => {
@@ -216,27 +209,24 @@ impl Input {
 
                         KeyCode::Tab | KeyCode::Esc => {
                             evt.emit(InputEvent::Blur);
-                            focused.store(false, SeqCst);
+                            focused.set(false);
                         }
 
                         KeyCode::Enter => {
                             evt.emit(InputEvent::Submit(txt.to_string()));
                         }
 
-                        // Unhandled, skip before we cancel event
                         _ => {
-                            *text.write().unwrap() = txt;
-                            *cursor.write().unwrap() = cur;
+                            text.set(txt);
+                            cursor.set(cur);
                             return;
                         }
                     }
 
-                    *text.write().unwrap() = txt;
-                    *cursor.write().unwrap() = cur;
+                    text.set(txt);
+                    cursor.set(cur);
                     ev.cancel();
                 }
-
-                // Write back — no read locks are held at this point.
             }
         });
 
@@ -252,8 +242,7 @@ impl Input {
         let sel_span = sel_hi - sel_lo;
         let center = if sel_span <= avail { (sel_lo + sel_hi) / 2 } else { caret };
 
-        let start = center.saturating_sub(avail / 2).min(total - avail); // never let the window run past the end
-
+        let start = center.saturating_sub(avail / 2).min(total - avail);
         (start, start + avail)
     }
 
@@ -263,48 +252,45 @@ impl Input {
     }
 
     pub fn load(&self, v: bool) {
-        self.loading.store(v, SeqCst);
+        self.loading.set(v);
     }
 
     pub fn set_text(&self, text: &str) {
-        *self.text.write().unwrap() = text.to_string();
-        *self.cursor.write().unwrap() = Cursor::collapse(text.len());
+        self.text.set(text.to_string());
+        self.cursor.set(Cursor::collapse(text.len()));
     }
 
     pub fn get_text(&self) -> String {
-        self.text.read().unwrap().clone()
+        self.text.get_cloned()
     }
 }
 
 impl Focusable for Input {
     fn focus(&self) {
-        self.focused.store(true, SeqCst);
+        self.focused.set(true);
         self.ev.emit(InputEvent::Focus);
     }
 
     fn blur(&self) {
-        self.focused.store(false, SeqCst);
+        self.focused.set(false);
         self.ev.emit(InputEvent::Blur);
     }
 }
 
 impl WidgetRef for Input {
     fn render_ref(&self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer) {
-        let text = self.text.read().map(|v| v.to_string()).unwrap_or_default();
-        let cur = self.cursor.read().map(|v| *v).unwrap_or(Cursor::point(0));
+        let text = self.text.get_cloned();
+        let cur = self.cursor.get();
 
         let sel_lo = cur.sel_lo();
         let sel_hi = cur.sel_hi();
-        let is_loading = self.loading.load(SeqCst);
+        let is_loading = self.loading.get();
 
-        // Rounded border with Borders::ALL eats one column on each side.
         let border_avail = area.width.saturating_sub(2) as usize;
-        // Reserve the last two columns for " " + spinner while loading.
         let avail = border_avail.saturating_sub(if is_loading { 2 } else { 0 });
         let total = text.chars().count();
         let (win_lo, win_hi) = Self::scroll_window(total, avail, sel_lo, sel_hi, cur.caret);
 
-        // char-index -> byte-index, so slicing stays UTF-8 safe.
         let byte_at = |idx: usize| text.char_indices().nth(idx).map(|(b, _)| b).unwrap_or(text.len());
 
         let (b_win_lo, b_win_hi) = (byte_at(win_lo), byte_at(win_hi));
@@ -315,7 +301,7 @@ impl WidgetRef for Input {
         let rel_sel_lo = b_sel_lo - b_win_lo;
         let rel_sel_hi = b_sel_hi - b_win_lo;
 
-        let blink = match self.ts.elapsed().as_secs().is_multiple_of(2) && self.focused.load(SeqCst) {
+        let blink = match self.ts.elapsed().as_secs().is_multiple_of(2) && self.focused.get() {
             true => Style::new().on_white(),
             false => Style::new(),
         };
@@ -348,7 +334,7 @@ impl WidgetRef for Input {
                 Block::new()
                     .border_type(BorderType::Rounded)
                     .borders(Borders::ALL)
-                    .border_style(match self.focused.load(SeqCst) {
+                    .border_style(match self.focused.get() {
                         true => Style::new().white(),
                         false => Style::new().gray(),
                     })

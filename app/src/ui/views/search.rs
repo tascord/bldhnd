@@ -7,12 +7,13 @@ use {
             views::{hcenter, home::BANNER_FONT, results::ResultsView, vstack},
         },
     },
+    futures_signals::signal::Mutable,
     ratatui::{
         layout::Constraint,
         prelude::*,
         widgets::{Paragraph, WidgetRef},
     },
-    std::sync::{Arc, RwLock},
+    std::sync::Arc,
     to_and_fro::ToAndFro,
     tokio::spawn,
     tracing::warn,
@@ -29,9 +30,9 @@ pub struct SearchView {
     banner: Vec<String>,
     input: Arc<Input>,
     radio: Arc<Radio>,
-    search_ty: Arc<RwLock<SearchType>>,
+    search_ty: Mutable<SearchType>,
 
-    results: Arc<RwLock<Option<ResultsView>>>,
+    results: Mutable<Option<ResultsView>>,
 
     _radio: Option<SubscriptionHandle<InputEvent<usize>>>,
     _input: Option<SubscriptionHandle<InputEvent<String>>>,
@@ -45,12 +46,12 @@ impl SearchView {
 
         let mut this = Self {
             banner: text.lines().map(|l| l.to_string()).collect::<Vec<_>>(),
-            search_ty: Arc::new(RwLock::new(SearchType::Music)),
+            search_ty: Mutable::new(SearchType::Music),
 
             input: Input::new("", "").into(),
             radio: Radio::new(SearchType::list()).into(),
 
-            results: Default::default(),
+            results: Mutable::new(None),
 
             _radio: None,
             _input: None,
@@ -60,7 +61,7 @@ impl SearchView {
             let st = this.search_ty.clone();
             move |ev| {
                 if let InputEvent::Submit(ev) = (**ev).clone() {
-                    *st.write().unwrap() = SearchType::list()[ev]
+                    st.set(SearchType::list()[ev])
                 }
             }
         }));
@@ -83,20 +84,21 @@ impl SearchView {
                     inp.load(true);
 
                     spawn(async move {
-                        let search_type = *st.read().unwrap();
+                        let search_type = st.get();
                         match search_type {
                             SearchType::Music => match data().music((q, 0)).await {
                                 Ok(v) => {
-                                    *rs.write().unwrap() =
+                                    rs.set(
                                         Some(ResultsView::new(v.into_iter().map(SearchResult::from).collect(), {
                                             let rs = rs.clone();
                                             move || {
-                                                *rs.write().unwrap() = None;
+                                                rs.set(None);
                                                 inp.focus();
                                                 rad.focus();
                                                 inp.load(false);
                                             }
                                         }))
+                                    )
                                 }
                                 Err(e) => {
                                     warn!("Failed to search: {e:?}");
@@ -107,16 +109,17 @@ impl SearchView {
                             },
                             SearchType::Movie | SearchType::Series => match data().media((q, 0)).await {
                                 Ok(v) => {
-                                    *rs.write().unwrap() =
+                                    rs.set(
                                         Some(ResultsView::new(v.into_iter().map(SearchResult::from).collect(), {
                                             let rs = rs.clone();
                                             move || {
-                                                *rs.write().unwrap() = None;
+                                                rs.set(None);
                                                 inp.focus();
                                                 rad.focus();
                                                 inp.load(false);
                                             }
                                         }))
+                                    )
                                 }
                                 Err(e) => {
                                     warn!("Failed to search: {e:?}");
@@ -143,7 +146,7 @@ impl WidgetRef for SearchView {
     where
         Self: Sized,
     {
-        if let Some(res) = self.results.read().unwrap().as_ref() {
+        if let Some(res) = self.results.lock_ref().as_ref() {
             res.render_ref(area, buf);
             return;
         }
@@ -156,13 +159,10 @@ impl WidgetRef for SearchView {
         let inner = area.centered(Constraint::Length((w as u16).max(area.width.min(32))), Constraint::Fill(1));
         let layout = vstack(&[h as u16, 3, 5], inner);
 
-        // Figlet Banner
         Paragraph::new(text).alignment(HorizontalAlignment::Center).render(layout[0], buf);
 
-        // Search Bar
         self.input.render_ref(layout[1], buf);
 
-        // Radio
         self.radio.render_ref(hcenter(w as u16, layout[2]), buf);
     }
 }

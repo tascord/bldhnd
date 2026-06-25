@@ -1,19 +1,18 @@
 use crate::ui::components::scroll::{ScrollText, Scroller};
 use ratatui::prelude::Text;
-use std::sync::{Arc, LazyLock, RwLock};
+use std::sync::Arc;
 use tracing::{
     Level,
     field::{Field, Visit},
 };
 use tracing_subscriber::layer::{Context, Layer};
 
-static LOG_SCROLLER: LazyLock<Arc<Scroller>> = LazyLock::new(|| Arc::new(Scroller::new()));
+static LOG_SCROLLER: std::sync::LazyLock<Arc<Scroller>> = std::sync::LazyLock::new(|| Arc::new(Scroller::new()));
 
 pub fn scroller() -> Arc<Scroller> {
     LOG_SCROLLER.clone()
 }
 
-/// Simple visitor to extract `message` field from tracing events.
 #[derive(Default)]
 struct MessageVisitor(String);
 
@@ -36,11 +35,8 @@ fn strip_ansi(s: &str) -> String {
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '\x1b' {
-            // CSI sequences start with '['
             if let Some('[') = chars.peek() {
-                // consume '['
                 chars.next();
-                // consume until letter in range '@'..='~'
                 while let Some(&nc) = chars.peek() {
                     let is_final = ('@'..='~').contains(&nc);
                     chars.next();
@@ -84,19 +80,16 @@ where
             text = event.metadata().name().to_string();
         }
 
-        // Strip ANSI and push as a ScrollText into the scroller
         let parsed = strip_ansi(&text);
         let sc = scroller();
 
-        // Compute a best-effort index (may race, that's acceptable for numbering)
-        let idx = sc.items.read().unwrap().len();
+        let idx = sc.items.lock_ref().len();
         let numbered = format!("{:03} {}", idx + 1, parsed);
 
         let t: ScrollText = ScrollText::new(Text::from(numbered));
         sc.item_ref(t);
 
-        // Trim to last ~200 entries
-        let mut items_lock = sc.items.write().unwrap();
+        let mut items_lock = sc.items.lock_mut();
         while items_lock.len() > 200 {
             items_lock.remove(0);
         }
@@ -105,7 +98,6 @@ where
 
 pub fn install_tracing() {
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-    // Combine sonner toasts with logs layer and initialise once
     tracing_subscriber::registry()
         .with(crate::ui::components::sonner::SonnerLayer::default())
         .with(LogsLayer::default())

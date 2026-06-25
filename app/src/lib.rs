@@ -1,11 +1,12 @@
 use {
+    futures_signals::signal::Mutable,
     serde::{Deserialize, Serialize},
     std::{
         env,
         fs::{File, OpenOptions},
         io::{Read, Write},
         path::Path,
-        sync::{Arc, LazyLock, RwLock},
+        sync::{Arc, LazyLock},
     },
     tracing::info,
 };
@@ -16,8 +17,8 @@ pub mod fs;
 pub mod logs;
 pub mod ui;
 
-static CONFIG: LazyLock<Arc<RwLock<Config>>> = LazyLock::new(|| Arc::new(RwLock::new(Config::new())));
-pub fn config() -> Arc<RwLock<Config>> { CONFIG.clone() }
+static CONFIG: LazyLock<Arc<Mutable<Config>>> = LazyLock::new(|| Arc::new(Mutable::new(Config::new())));
+pub fn config() -> Arc<Mutable<Config>> { CONFIG.clone() }
 
 pub fn file() -> File {
     let p = Path::new(&env::home_dir().expect("No home dir")).join(".config/").join("bldhnd.json");

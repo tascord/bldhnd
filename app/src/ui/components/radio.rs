@@ -11,6 +11,7 @@ use {
         },
     },
     crossterm::event::{KeyCode, KeyModifiers},
+    futures_signals::signal::Mutable,
     ratatui::{
         text::Line,
         widgets::{Paragraph, Widget, WidgetRef},
@@ -18,17 +19,13 @@ use {
     std::{
         fmt::Display,
         ops::Deref,
-        sync::{
-            Arc,
-            atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
-        },
     },
 };
 
 pub struct Radio {
     options: Vec<String>,
-    selection: Arc<AtomicUsize>,
-    focused: Arc<AtomicBool>,
+    selection: Mutable<usize>,
+    focused: Mutable<bool>,
     subs: Option<[SubscriptionHandle<ModelEvent>; 1]>,
     ev: EventTarget<InputEvent<usize>>,
 }
@@ -45,8 +42,8 @@ impl Radio {
     pub fn new<D: Display>(options: impl IntoIterator<Item = D>) -> Self {
         let mut this = Self {
             options: options.into_iter().map(|v| v.to_string()).collect(),
-            selection: AtomicUsize::new(0).into(),
-            focused: AtomicBool::new(false).into(),
+            selection: Mutable::new(0),
+            focused: Mutable::new(false),
             subs: None,
             ev: EventTarget::new(),
         };
@@ -59,21 +56,21 @@ impl Radio {
 
             move |ev| {
                 let ModelEvent::KeyPress(key_event) = **ev;
-                if focused.load(SeqCst) {
+                if focused.get() {
                     let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
 
                     match key_event.code {
-                        KeyCode::Up if ctrl => selected.store(0, SeqCst),
-                        KeyCode::Up => selected.store(selected.load(SeqCst).saturating_sub(1), SeqCst),
-                        KeyCode::Home => selected.store(0, SeqCst),
+                        KeyCode::Up if ctrl => selected.set(0),
+                        KeyCode::Up => selected.set(selected.get().saturating_sub(1)),
+                        KeyCode::Home => selected.set(0),
 
-                        KeyCode::Down if ctrl => selected.store(len - 1, SeqCst),
-                        KeyCode::Down => selected.store(selected.load(SeqCst).saturating_add(1).min(len - 1), SeqCst),
-                        KeyCode::End => selected.store(len - 1, SeqCst),
+                        KeyCode::Down if ctrl => selected.set(len - 1),
+                        KeyCode::Down => selected.set((selected.get() + 1).min(len - 1)),
+                        KeyCode::End => selected.set(len - 1),
 
                         KeyCode::Tab | KeyCode::Esc => {
                             evt.emit(InputEvent::Blur);
-                            focused.store(false, SeqCst);
+                            focused.set(false);
                             ev.cancel();
                             return;
                         }
@@ -81,7 +78,7 @@ impl Radio {
                         _ => return,
                     }
 
-                    evt.emit(InputEvent::Submit(selected.load(SeqCst)));
+                    evt.emit(InputEvent::Submit(selected.get()));
                     ev.cancel();
                 }
             }
@@ -94,19 +91,19 @@ impl Radio {
 
 impl Focusable for Radio {
     fn focus(&self) {
-        self.focused.store(true, SeqCst);
+        self.focused.set(true);
         self.ev.emit(InputEvent::Focus);
     }
 
     fn blur(&self) {
-        self.focused.store(false, SeqCst);
+        self.focused.set(false);
         self.ev.emit(InputEvent::Blur);
     }
 }
 
 impl WidgetRef for Radio {
     fn render_ref(&self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer) {
-        let s = self.selection.load(SeqCst);
+        let s = self.selection.get();
         let lines = self
             .options
             .iter()
@@ -121,7 +118,7 @@ impl WidgetRef for Radio {
                         },
                         o
                     ),
-                    match self.focused.load(SeqCst) {
+                    match self.focused.get() {
                         true => Style::new().white(),
                         false => Style::new().gray(),
                     },

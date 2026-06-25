@@ -7,50 +7,47 @@ use {
         },
     },
     crossterm::event::{KeyCode, KeyModifiers},
+    futures_signals::signal::Mutable,
     ratatui::{
         prelude::*,
         widgets::{Paragraph, WidgetRef},
     },
     std::{
         ops::Deref,
-        sync::{
-            Arc, RwLock,
-            atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
-        },
+        sync::LazyLock,
     },
 };
 
-static CURRENT_SCROLLER: std::sync::LazyLock<Arc<AtomicBool>> =
-    std::sync::LazyLock::new(|| Arc::new(AtomicBool::new(false)));
+static CURRENT_SCROLLER: LazyLock<Mutable<bool>> = LazyLock::new(|| Mutable::new(false));
 
-static CURRENT_SCROLLER_BLUR: std::sync::LazyLock<Arc<RwLock<Option<Box<dyn Fn() + Send + Sync>>>>> =
-    std::sync::LazyLock::new(|| Arc::new(RwLock::new(None)));
+static CURRENT_SCROLLER_BLUR: LazyLock<Mutable<Option<Box<dyn Fn() + Send + Sync>>>> =
+    LazyLock::new(|| Mutable::new(None));
 
-static CURRENT_SCROLLER_FOCUS: std::sync::LazyLock<Arc<RwLock<Option<Box<dyn Fn() + Send + Sync>>>>> =
-    std::sync::LazyLock::new(|| Arc::new(RwLock::new(None)));
+static CURRENT_SCROLLER_FOCUS: LazyLock<Mutable<Option<Box<dyn Fn() + Send + Sync>>>> =
+    LazyLock::new(|| Mutable::new(None));
 
 pub fn is_scroller_focused() -> bool {
-    CURRENT_SCROLLER.load(SeqCst)
+    CURRENT_SCROLLER.get()
 }
 
 pub fn register_scroller_blur(callback: Box<dyn Fn() + Send + Sync>) {
-    *CURRENT_SCROLLER_BLUR.write().unwrap() = Some(callback);
+    *CURRENT_SCROLLER_BLUR.lock_mut() = Some(callback);
 }
 
 pub fn register_scroller_focus(callback: Box<dyn Fn() + Send + Sync>) {
-    *CURRENT_SCROLLER_FOCUS.write().unwrap() = Some(callback);
+    *CURRENT_SCROLLER_FOCUS.lock_mut() = Some(callback);
 }
 
 pub fn blur_current_scroller() {
-    CURRENT_SCROLLER.store(false, SeqCst);
-    if let Some(cb) = CURRENT_SCROLLER_BLUR.read().unwrap().as_ref() {
+    CURRENT_SCROLLER.set(false);
+    if let Some(cb) = CURRENT_SCROLLER_BLUR.lock_ref().as_ref() {
         cb();
     }
 }
 
 pub fn focus_current_scroller() {
-    CURRENT_SCROLLER.store(true, SeqCst);
-    if let Some(cb) = CURRENT_SCROLLER_FOCUS.read().unwrap().as_ref() {
+    CURRENT_SCROLLER.set(true);
+    if let Some(cb) = CURRENT_SCROLLER_FOCUS.lock_ref().as_ref() {
         cb();
     }
 }
@@ -61,21 +58,21 @@ pub trait ScrollItem: WidgetRef + Focusable {
 }
 
 #[derive(Clone)]
-pub struct ScrollText<'a>(Text<'a>, Arc<AtomicBool>);
+pub struct ScrollText<'a>(Text<'a>, Mutable<bool>);
 impl Focusable for ScrollText<'_> {
     fn focus(&self) {
-        self.1.store(true, SeqCst);
+        self.1.set(true);
     }
 
     fn blur(&self) {
-        self.1.store(false, SeqCst);
+        self.1.set(false);
     }
 }
 
 impl WidgetRef for ScrollText<'_> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         Paragraph::new(self.0.clone())
-            .style(match self.1.load(SeqCst) {
+            .style(match *self.1.lock_ref() {
                 true => Style::new().on_white().black(),
                 false => Style::new(),
             })
@@ -95,15 +92,15 @@ impl ScrollItem for ScrollText<'_> {
 
 impl<'a> ScrollText<'a> {
     pub fn new(d: impl Into<Text<'a>>) -> Self {
-        Self(d.into(), AtomicBool::new(false).into())
+        Self(d.into(), Mutable::new(false))
     }
 }
 
 pub struct Scroller {
-    pub selected: Arc<AtomicUsize>,
-    pub scroll: Arc<AtomicUsize>,
-    pub items: Arc<RwLock<Vec<Box<dyn ScrollItem + Sync + Send + 'static>>>>,
-    pub focused: Arc<AtomicBool>,
+    pub selected: Mutable<usize>,
+    pub scroll: Mutable<usize>,
+    pub items: Mutable<Vec<Box<dyn ScrollItem + Sync + Send + 'static>>>,
+    pub focused: Mutable<bool>,
     subs: Option<[SubscriptionHandle<ModelEvent>; 1]>,
     ev: EventTarget<InputEvent<usize>>,
 }
@@ -120,11 +117,11 @@ impl Deref for Scroller {
 impl Scroller {
     pub fn new() -> Self {
         let mut this = Self {
-            selected: AtomicUsize::new(0).into(),
-            scroll: AtomicUsize::new(0).into(),
-            items: Default::default(),
+            selected: Mutable::new(0),
+            scroll: Mutable::new(0),
+            items: Mutable::new(Vec::new()),
             ev: EventTarget::new(),
-            focused: AtomicBool::new(false).into(),
+            focused: Mutable::new(false),
             subs: None,
         };
 
@@ -136,51 +133,51 @@ impl Scroller {
 
             move |ev| {
                 let ModelEvent::KeyPress(key_event) = **ev;
-                if !focused.load(SeqCst) {
+                if !focused.get() {
                     return;
                 }
 
-                let prev = selected.load(SeqCst);
+                let prev = selected.get();
                 let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
-                let items = items.read().unwrap();
+                let items = items.lock_ref();
                 let len = items.len();
 
                 match key_event.code {
                     KeyCode::Up if ctrl => {
-                        selected.store(0, SeqCst);
+                        selected.set(0);
                     }
                     KeyCode::Up => {
-                        let cur = selected.load(SeqCst);
-                        selected.store(cur.saturating_sub(1), SeqCst);
+                        let cur = selected.get();
+                        selected.set(cur.saturating_sub(1));
                     }
                     KeyCode::Home => {
-                        selected.store(0, SeqCst);
+                        selected.set(0);
                     }
 
                     KeyCode::Down if ctrl => {
                         if len > 0 {
-                            selected.store(len - 1, SeqCst);
+                            selected.set(len - 1);
                         }
                     }
                     KeyCode::Down => {
-                        let cur = selected.load(SeqCst);
+                        let cur = selected.get();
                         if len > 0 {
-                            selected.store((cur + 1).min(len - 1), SeqCst);
+                            selected.set((cur + 1).min(len - 1));
                         }
                     }
                     KeyCode::End => {
                         if len > 0 {
-                            selected.store(len - 1, SeqCst);
+                            selected.set(len - 1);
                         }
                     }
 
                     KeyCode::Tab | KeyCode::Esc => {
                         evt.emit(InputEvent::Blur);
-                        focused.store(false, SeqCst);
+                        focused.set(false);
                     }
 
                     KeyCode::Enter => {
-                        evt.emit(InputEvent::Submit(selected.load(SeqCst)));
+                        evt.emit(InputEvent::Submit(selected.get()));
                     }
 
                     _ => return,
@@ -188,13 +185,13 @@ impl Scroller {
 
                 ev.cancel();
                 if let Some(it) = items.get(prev)
-                    && focused.load(SeqCst)
+                    && focused.get()
                 {
                     it.blur();
                 }
 
-                if let Some(it) = items.get(selected.load(SeqCst))
-                    && focused.load(SeqCst)
+                if let Some(it) = items.get(selected.get())
+                    && focused.get()
                 {
                     it.focus();
                 }
@@ -219,7 +216,7 @@ impl Scroller {
     }
 
     pub fn item_ref(&self, i: impl ScrollItem + Sync + Send + 'static) {
-        self.items.write().unwrap().push(Box::new(i) as Box<dyn ScrollItem + Sync + Send + 'static>);
+        self.items.lock_mut().push(Box::new(i) as Box<dyn ScrollItem + Sync + Send + 'static>);
     }
 
     pub fn items_ref<T>(&self, i: impl IntoIterator<Item = T>)
@@ -228,34 +225,31 @@ impl Scroller {
     {
         let i: Vec<Box<dyn ScrollItem + Send + Sync>> =
             i.into_iter().map(|i| Box::new(i) as Box<dyn ScrollItem + Sync + Send + 'static>).collect();
-        self.items.write().unwrap().extend(i);
+        self.items.lock_mut().extend(i);
     }
 
     fn clamp_scroll(&self, area_height: usize) {
-        let len = self.items.read().unwrap().len();
+        let items = self.items.lock_ref();
+        let len = items.len();
         if len == 0 {
             return;
         }
 
-        let selected = self.selected.load(SeqCst);
-        let mut scroll = self.scroll.load(SeqCst);
+        let selected = self.selected.get();
+        let mut scroll = self.scroll.get();
 
-        // basic bounds
         scroll = scroll.min(len.saturating_sub(1));
 
-        // ensure selected is visible (row-aware approximation)
         let mut used_rows = 0;
         let mut start = scroll;
 
-        // move scroll up if needed
         if selected < scroll {
             start = selected;
         }
 
-        // move scroll down if needed
         if selected >= scroll {
             for i in scroll..=selected.min(len - 1) {
-                let h = self.items.read().unwrap()[i].height().max(1);
+                let h = items[i].height().max(1);
                 if used_rows + h as usize > area_height {
                     start = i;
                     break;
@@ -264,27 +258,27 @@ impl Scroller {
             }
         }
 
-        self.scroll.store(start, SeqCst);
+        self.scroll.set(start);
     }
 }
 
 impl Focusable for Scroller {
     fn focus(&self) {
-        self.focused.store(true, SeqCst);
-        CURRENT_SCROLLER.store(true, SeqCst);
+        self.focused.set(true);
+        CURRENT_SCROLLER.set(true);
         self.ev.emit(InputEvent::Focus);
     }
 
     fn blur(&self) {
-        self.focused.store(false, SeqCst);
-        CURRENT_SCROLLER.store(false, SeqCst);
+        self.focused.set(false);
+        CURRENT_SCROLLER.set(false);
         self.ev.emit(InputEvent::Blur);
     }
 }
 
 impl WidgetRef for Scroller {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        let items = self.items.read().unwrap();
+        let items = self.items.lock_ref();
         let len = items.len();
 
         if len == 0 || area.height == 0 {
@@ -295,7 +289,7 @@ impl WidgetRef for Scroller {
 
         self.clamp_scroll(height);
 
-        let scroll = self.scroll.load(SeqCst);
+        let scroll = self.scroll.get();
 
         let mut y = area.y;
         let mut used_rows = 0;
