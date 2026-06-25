@@ -219,6 +219,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "boba"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "crossterm",
+ "figlet-rs",
+ "futures",
+ "futures-signals",
+ "rand 0.10.1",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "unicode-width",
+ "uuid",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
