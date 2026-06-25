@@ -1,7 +1,7 @@
-use crate::table_list_kv;
+use std::time::Instant;
 
 use {
-    crate::{KnowledgeBase, db, mb::ty::MinifiedRelease},
+    crate::{KnowledgeBase, db, mb::ty::MinifiedRelease, table_list_kv},
     anyhow::{anyhow, bail},
     async_compression::tokio::bufread::XzDecoder,
     futures::StreamExt,
@@ -10,8 +10,10 @@ use {
     serde_json,
     std::{
         path::Path,
-        sync::atomic::{AtomicUsize, Ordering},
-        sync::{Arc, LazyLock, RwLock},
+        sync::{
+            Arc, LazyLock, RwLock,
+            atomic::{AtomicUsize, Ordering},
+        },
     },
     tokio::io::{AsyncBufReadExt, BufReader},
     tokio_tar::Archive,
@@ -21,9 +23,7 @@ use {
 
 pub mod ty;
 static CLIENT: LazyLock<Arc<MusicBrainz>> = LazyLock::new(|| Arc::new(MusicBrainz::new()));
-pub fn client() -> Arc<MusicBrainz> {
-    CLIENT.clone()
-}
+pub fn client() -> Arc<MusicBrainz> { CLIENT.clone() }
 
 #[derive(Debug)]
 pub struct MusicBrainz {
@@ -65,7 +65,7 @@ impl KnowledgeBase for MusicBrainz {
             }
         }
 
-        flat.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+        flat.sort_unstable_by_key(|b| std::cmp::Reverse(b.0));
 
         let offset = 50usize.saturating_mul(p);
         let mut out = Vec::new();
@@ -83,15 +83,15 @@ impl KnowledgeBase for MusicBrainz {
         Ok(out)
     }
 
-    fn stats(&self) -> anyhow::Result<usize> {
-        Ok(self.total.load(Ordering::Relaxed))
-    }
+    fn stats(&self) -> anyhow::Result<usize> { Ok(self.total.load(Ordering::Relaxed)) }
 }
 
 #[allow(clippy::new_without_default)]
 impl MusicBrainz {
     pub fn new() -> Self {
+        let i = Instant::now();
         let db = Database::create(db().join("mb.db")).expect("Failed to create MusicBrain db");
+        info!("Took {}ms to open db", i.elapsed().as_millis());
 
         let txn = db.begin_write().unwrap();
         txn.open_table(Self::releases_table_def()).unwrap();

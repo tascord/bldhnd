@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use {
     crate::{KnowledgeBase, db, table_list_kv, wikidata::ty::WikiDataItem},
     fz::fzrank,
@@ -61,7 +63,7 @@ impl KnowledgeBase for WikiData {
             }
         }
 
-        flat.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+        flat.sort_unstable_by_key(|b| std::cmp::Reverse(b.0));
 
         let offset = 50usize.saturating_mul(p);
         let mut out = Vec::new();
@@ -85,11 +87,10 @@ impl KnowledgeBase for WikiData {
 #[allow(clippy::new_without_default)]
 impl WikiData {
     pub fn new() -> Self {
-        let db_path = db().join("wikidata.db");
-        let db = Database::create(&db_path).unwrap_or_else(|e| {
-            panic!("Failed to create WikiData db at {}: {e} (check disk space and permissions)", db_path.display())
-        });
-        
+        let i = Instant::now();
+        let db = Database::create(db().join("wikidata.db")).expect("Failed to create WikiData db");
+        info!("Took {}ms to open db", i.elapsed().as_millis());
+
 
         let txn = db.begin_write().unwrap();
         txn.open_table(Self::items_table_def()).unwrap();

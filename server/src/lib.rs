@@ -153,5 +153,5 @@ where
 
     let range = lb..=rb;
 
-    Ok(table.range(range)?.filter_map(|d| d.ok()).map(|(k, v)| (k, v)).collect::<Vec<_>>())
+    Ok(table.range(range)?.filter_map(|d| d.ok()).collect::<Vec<_>>())
 }
