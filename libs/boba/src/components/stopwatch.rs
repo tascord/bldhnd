@@ -1,14 +1,7 @@
-use std::time::Instant;
-
-use async_trait::async_trait;
-
-use crate::{Ctx, components::Component};
+use {crate::components::Component, ratatui::Frame, std::time::Instant};
 
 pub struct Stopwatch(Instant);
 
-#[async_trait]
 impl Component for Stopwatch {
-    async fn render(&mut self, ctx: Ctx) {
-        
-    }
+    fn render(&mut self, _ctx: &mut Frame<'_>, _theme: &crate::theme::Theme) {}
 }

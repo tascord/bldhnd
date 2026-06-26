@@ -3,10 +3,10 @@ use {
     futures_signals::signal_map::MutableBTreeMap,
     std::{
         fmt::Debug,
-        ops::Deref,
+        ops::{Deref, DerefMut},
         pin::Pin,
         sync::{
-            Arc,
+            Arc, Weak,
             atomic::{AtomicBool, Ordering::SeqCst},
         },
         task::{Context, Poll},
@@ -38,6 +38,45 @@ pub enum SubscriptionPriority {
     Low,
 }
 
+/// Event dispatch phase — similar to DOM event phases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventPhase {
+    Capture,
+    Target,
+    Bubble,
+}
+
+/// Event context with cancellation state + dispatch metadata.
+pub struct EventContext<T: Debug> {
+    pub phase: EventPhase,
+    pub target: String,
+    pub source: String,
+    inner: Arc<Cancellable<T>>,
+}
+
+impl<T: Debug> EventContext<T> {
+    pub fn new(target: impl Into<String>, source: impl Into<String>, inner: Arc<T>) -> Self {
+        Self {
+            phase: EventPhase::Target,
+            target: target.into(),
+            source: source.into(),
+            inner: Arc::new(Cancellable { inner, cancelled: AtomicBool::new(false) }),
+        }
+    }
+
+    pub fn data(&self) -> &T { &self.inner.inner }
+
+    pub fn cancel(&self) { self.inner.cancel(); }
+
+    pub fn cancelled(&self) -> bool { self.inner.cancelled.load(SeqCst) }
+}
+
+impl<T: Debug> Clone for EventContext<T> {
+    fn clone(&self) -> Self {
+        Self { phase: self.phase, target: self.target.clone(), source: self.source.clone(), inner: self.inner.clone() }
+    }
+}
+
 type Handler<T> = Box<dyn Fn(Arc<Cancellable<T>>) + Send + Sync>;
 
 pub struct Subscription<T: Debug> {
@@ -59,21 +98,28 @@ impl<T: Debug> Subscription<T> {
 
 #[derive(Debug)]
 pub struct EventTarget<T: Debug> {
-    // MutableBTreeMap gives us a safe, lock-ordered collection with no
-    // raw pointers and no separate channel to drain.
     listeners: MutableBTreeMap<Uuid, Arc<Subscription<T>>>,
+    parent: std::sync::Mutex<Vec<Weak<EventTarget<T>>>>,
+    name: String,
 }
 
 impl<T: Debug> EventTarget<T> {
-    pub fn new() -> Self { Self { listeners: MutableBTreeMap::new() } }
+    pub fn new(name: impl Into<String>) -> Self {
+        Self { listeners: MutableBTreeMap::new(), parent: std::sync::Mutex::new(Vec::new()), name: name.into() }
+    }
+
+    /// Attach a parent target so events can bubble up.
+    pub fn set_parent(&self, _name: impl Into<String>, parent: Weak<EventTarget<T>>) {
+        self.parent.lock().unwrap().push(parent);
+    }
 
     #[instrument(level = "trace")]
     pub fn emit(&self, v: impl Into<Arc<T>> + Debug) {
         let v = Arc::new(Cancellable { inner: v.into(), cancelled: AtomicBool::new(false) });
+        self.dispatch(v);
+    }
 
-        // Single short-lived lock; snapshot then drop before invoking handlers,
-        // so a handler that calls `off`/drops a Subscription can't deadlock
-        // re-entering the same map.
+    fn dispatch(&self, v: Arc<Cancellable<T>>) {
         let high: Vec<_> = {
             let lock = self.listeners.lock_ref();
             lock.values().filter(|s| s.priority == SubscriptionPriority::High).cloned().collect()
@@ -89,6 +135,29 @@ impl<T: Debug> EventTarget<T> {
             };
             for s in &low {
                 s.update(v.clone());
+            }
+        }
+    }
+
+    /// Emit and bubble up the parent chain.
+    pub fn emit_bubbling(&self, v: impl Into<Arc<T>> + Debug) {
+        let v = Arc::new(Cancellable { inner: v.into(), cancelled: AtomicBool::new(false) });
+        self.dispatch(v.clone());
+
+        if v.cancelled.load(SeqCst) {
+            return;
+        }
+
+        // Bubble up to parents
+        let parents: Vec<_> = {
+            let lock = self.parent.lock().unwrap();
+            lock.iter().filter_map(|weak| weak.upgrade()).collect()
+        };
+
+        for parent in &parents {
+            // Re-cast as T if needed, or just call their emit if types match
+            if !v.cancelled.load(SeqCst) {
+                parent.dispatch(v.clone());
             }
         }
     }
@@ -113,11 +182,17 @@ impl<T: Debug> EventTarget<T> {
 }
 
 impl<T: Debug> Default for EventTarget<T> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self { Self::new("root") }
 }
 
 impl<T: Debug> Clone for EventTarget<T> {
-    fn clone(&self) -> Self { Self { listeners: self.listeners.clone() } }
+    fn clone(&self) -> Self {
+        Self {
+            listeners: self.listeners.clone(),
+            parent: std::sync::Mutex::new(self.parent.lock().unwrap().clone()),
+            name: self.name.clone(),
+        }
+    }
 }
 
 /// Owns removal-on-drop instead of a raw pointer back to the target.
@@ -166,6 +241,10 @@ impl<T: Debug> Deref for EventStream<T> {
     type Target = UnboundedReceiver<Arc<T>>;
 
     fn deref(&self) -> &Self::Target { &self.ch }
+}
+
+impl<T: Debug> DerefMut for EventStream<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.ch }
 }
 
 impl<T: Debug> Stream for EventStream<T> {
