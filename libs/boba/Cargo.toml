@@ -16,3 +16,4 @@ uuid = { version = "1.23.3", features = ["v4"] }
 colorsys = "0.6.7"
 rand = "0.9"
 figlet-rs = "0.1.5"
+image = "0.25"

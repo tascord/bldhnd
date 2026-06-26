@@ -1,4 +1,7 @@
-use ratatui::Frame;
+use {
+    crossterm::event::Event,
+    ratatui::{ prelude::Rect, Frame },
+};
 
 pub mod anim;
 pub mod asciiimg;
@@ -40,4 +43,10 @@ pub trait Component {
     fn height(&self) -> Option<usize> { None }
 
     fn render(&mut self, ctx: &mut Frame<'_>, theme: &Theme);
+
+    fn handle_event(&mut self, _area: Rect, _ev: &Event) {}
+
+    fn wants_focus(&self) -> bool { false }
+
+    fn id(&self) -> &str { "anonymous" }
 }

@@ -56,6 +56,9 @@ impl Surface {
 
     pub fn height(&self) -> usize { self.rows.len() }
 
+    /// Cell count width (number of columns, ignoring visual width of individual cells).
+    pub fn cell_count_width(&self) -> usize { self.rows.iter().map(|r| r.len()).max().unwrap_or(0) }
+
     /// Get a mutable reference to a cell, if it exists.
     pub fn cell_mut(&mut self, x: usize, y: usize) -> Option<&mut Cell> { self.rows.get_mut(y)?.get_mut(x) }
 
@@ -151,14 +154,14 @@ pub fn join_horizontal(align: Position, surfaces: &[Surface]) -> Surface {
         return Surface { rows: Vec::new() };
     }
 
-    let total_width = surfaces.iter().map(|s| s.width()).sum();
+    let total_cells: usize = surfaces.iter().map(|s| s.rows.iter().map(|r| r.len()).max().unwrap_or(0)).sum();
     let max_height = surfaces.iter().map(|s| s.height()).max().unwrap_or(0);
     let blank = Cell::blank(Style::default());
-    let mut out = Surface::new(total_width, max_height, &blank);
+    let mut out = Surface::new(total_cells, max_height, &blank);
 
     let mut x_offset = 0;
     for surf in surfaces {
-        let surf_w = surf.width();
+        let surf_w = surf.rows.iter().map(|r| r.len()).max().unwrap_or(0);
         let surf_h = surf.height();
         let y_offset = match align {
             Position::Top => 0,
@@ -176,7 +179,7 @@ pub fn join_horizontal(align: Position, surfaces: &[Surface]) -> Surface {
                 if let Some(dst) = out.cell_mut(x_offset + dx, y) {
                     *dst = cell.clone();
                 }
-                dx += cell.width().max(1);
+                dx += 1;
             }
         }
         x_offset += surf_w;
@@ -192,18 +195,18 @@ pub fn join_vertical(align: Position, surfaces: &[Surface]) -> Surface {
     }
 
     let total_height = surfaces.iter().map(|s| s.height()).sum();
-    let max_width = surfaces.iter().map(|s| s.width()).max().unwrap_or(0);
+    let max_cells = surfaces.iter().map(|s| s.rows.iter().map(|r| r.len()).max().unwrap_or(0)).max().unwrap_or(0);
     let blank = Cell::blank(Style::default());
-    let mut out = Surface::new(max_width, total_height, &blank);
+    let mut out = Surface::new(max_cells, total_height, &blank);
 
     let mut y_offset = 0;
     for surf in surfaces {
-        let surf_w = surf.width();
+        let surf_w = surf.rows.iter().map(|r| r.len()).max().unwrap_or(0);
         let surf_h = surf.height();
         let x_offset = match align {
             Position::Left => 0,
-            Position::Right => max_width.saturating_sub(surf_w),
-            _ => (max_width.saturating_sub(surf_w)) / 2,
+            Position::Right => max_cells.saturating_sub(surf_w),
+            _ => (max_cells.saturating_sub(surf_w)) / 2,
         };
 
         for (dy, row) in surf.rows.iter().enumerate() {
@@ -216,7 +219,7 @@ pub fn join_vertical(align: Position, surfaces: &[Surface]) -> Surface {
                 if let Some(dst) = out.cell_mut(x_offset + dx, y) {
                     *dst = cell.clone();
                 }
-                dx += cell.width().max(1);
+                dx += 1;
             }
         }
         y_offset += surf_h;
@@ -228,7 +231,7 @@ pub fn join_vertical(align: Position, surfaces: &[Surface]) -> Surface {
 /// Place a surface inside a larger box with the given alignment.
 pub fn place(width: usize, height: usize, h_align: Position, v_align: Position, surf: &Surface, fill: &Cell) -> Surface {
     let mut out = Surface::new(width, height, fill);
-    let sw = surf.width();
+    let sw = surf.rows.iter().map(|r| r.len()).max().unwrap_or(0);
     let sh = surf.height();
 
     let x = match h_align {
@@ -256,7 +259,7 @@ pub fn place(width: usize, height: usize, h_align: Position, v_align: Position, 
             if let Some(dst) = out.cell_mut(dst_x, dst_y) {
                 *dst = cell.clone();
             }
-            dx += cell.width().max(1);
+            dx += 1;
         }
     }
 
@@ -295,7 +298,7 @@ pub fn set_height(surf: &mut Surface, height: usize, fill: &Cell) {
     if current_height > height {
         surf.rows.truncate(height);
     } else if current_height < height {
-        let width = surf.width();
+        let width = surf.cell_count_width();
         for _ in 0..(height - current_height) {
             surf.rows.push((0..width).map(|_| fill.clone()).collect());
         }
@@ -319,25 +322,22 @@ pub fn place_with_whitespace(
     let chars_vec: Vec<char> = chars.chars().collect();
     let mut out = Surface::new(width, height, &Cell::blank(fill_style));
 
-    // Fill background with cycling chars
+    // Fill background with cycling chars (using cell count for x advance)
     let mut char_idx = 0;
     for y in 0..height {
         let mut x = 0usize;
-        for _ in 0..width {
-            if x >= width {
-                break;
-            }
+        while x < width {
             let ch = chars_vec[char_idx % chars_vec.len()];
             if let Some(dst) = out.cell_mut(x, y) {
                 *dst = Cell::new(ch.to_string(), fill_style);
             }
-            x += ch.to_string().width().max(1);
+            x += 1; // each cell is one position
             char_idx += 1;
         }
     }
 
-    // Paste content on top
-    let sw = surf.width();
+    // Paste content on top (using cell count for surface dimensions)
+    let sw = surf.cell_count_width();
     let sh = surf.height();
     let x = match h_align {
         Position::Left => 0,
@@ -364,7 +364,7 @@ pub fn place_with_whitespace(
             if let Some(dst) = out.cell_mut(dst_x, dst_y) {
                 *dst = cell.clone();
             }
-            dx += cell.width().max(1);
+            dx += 1; // cell count - each cell is 1 position
         }
     }
 

@@ -170,7 +170,7 @@ impl Border {
 
     /// Draw this border around an existing surface, using `style` for the border lines.
     pub fn draw(&self, surf: &Surface, style: Style) -> Surface {
-        let inner_w = surf.width();
+        let inner_w = surf.cell_count_width();
         let inner_h = surf.height();
         let bw = self.vertical_size();
         let bh = self.horizontal_size();
@@ -242,7 +242,7 @@ impl Border {
                 if let Some(dst) = out.cell_mut(off_x + dx, off_y + dy) {
                     *dst = cell.clone();
                 }
-                dx += cell.width().max(1);
+                dx += 1; // cell count - each cell is 1 position
             }
         }
 

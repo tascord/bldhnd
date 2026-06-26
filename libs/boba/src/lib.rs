@@ -11,7 +11,7 @@ use {
     },
     futures::StreamExt,
     futures_signals::signal::Mutable,
-    ratatui::{DefaultTerminal, Frame, backend::CrosstermBackend},
+    ratatui::{DefaultTerminal, Frame, backend::CrosstermBackend, prelude::Rect},
     std::{io::stdout, ops::Deref, sync::Arc},
 };
 
@@ -33,6 +33,8 @@ pub trait View {
     fn mount(&self, _app: &EventTarget<AppEvent>) {}
 
     fn render(&self, ctx: &mut Frame<'_>, theme: &Theme);
+
+    fn on_mouse(&self, _ev: &MouseEvent) {}
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -40,6 +42,7 @@ pub enum AppEvent {
     Quit,
     RequestAnimationFrame,
     SetTheme(usize),
+    Resize(u16, u16),
     KeyEvent(KeyEvent),
     MouseEvent(MouseEvent),
 }
@@ -143,11 +146,13 @@ impl App {
                             dt.draw(|f| { self.inner.render(f, &theme); })?;
                         }
                         Some(Ok(CrosstermEvent::Mouse(mouse))) => {
+                            self.inner.on_mouse(&mouse);
                             self.ev.emit(AppEvent::MouseEvent(mouse));
                             let theme = self.theme.get_cloned();
                             dt.draw(|f| { self.inner.render(f, &theme); })?;
                         }
-                        Some(Ok(CrosstermEvent::Resize(_w, _h))) => {
+                        Some(Ok(CrosstermEvent::Resize(w, h))) => {
+                            self.ev.emit(AppEvent::Resize(w, h));
                             let theme = self.theme.get_cloned();
                             dt.draw(|f| { self.inner.render(f, &theme); })?;
                         }

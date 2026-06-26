@@ -8,23 +8,28 @@ use {
         App, AppEvent, View,
         components::{
             border::Border,
+            button::{Button, ButtonVariant},
             layer::{Compositor, CompositorLayer},
             style::{BobaStyle, blend_1d, blend_2d, has_dark_background, hex_color, light_dark},
+            tabs::Tabs,
         },
         events::{EventTarget, SubscriptionPriority},
         surface::{Cell, Position, Surface, join_horizontal, join_vertical, place_with_whitespace},
         theme::Theme,
     },
-    crossterm::event::{KeyCode, MouseEvent},
+    crossterm::event::{Event as CrosstermEvent, KeyCode, MouseEvent},
+    futures_signals::signal::Mutable,
+    std::sync::Mutex,
     ratatui::{
-        Frame,
         layout::Alignment,
+        prelude::Rect,
+        Frame,
         style::{Color, Style},
     },
 };
 
 const WIDTH: usize = 96;
-const COLUMN_WIDTH: usize = 30;
+const COLUMN_WIDTH: usize = WIDTH / 3;
 
 fn color_grid_surf(x_steps: usize, y_steps: usize) -> Surface {
     let colors =
@@ -33,7 +38,9 @@ fn color_grid_surf(x_steps: usize, y_steps: usize) -> Surface {
     for row in colors {
         let mut cells = Vec::new();
         for color in row {
-            cells.push(Cell::new("  ", Style::default().bg(color)));
+            let style = Style::default().bg(color);
+            cells.push(Cell::new(" ", style));
+            cells.push(Cell::new(" ", style));
         }
         rows.push(cells);
     }
@@ -55,10 +62,58 @@ fn apply_gradient(text: &str, from: Color, to: Color) -> Surface {
     Surface { rows: vec![row] }
 }
 
-struct LayoutView;
+// ─── Style Helpers ───────────────────────────────────────────────────────────
+
+fn btn(label: &str, fg: Color, bg: Color, bold: bool) -> BobaStyle {
+    let mut s = BobaStyle::new().fg(fg).bg(bg).padding_y(0).padding_x(1).margin_top(1);
+    if bold { s = s.bold(); }
+    s
+}
+
+fn primary_btn(label: &str) -> BobaStyle { btn(label, hex_color("#FFF7DB"), hex_color("#F25D94"), true).margin_right(2) }
+fn secondary_btn(label: &str) -> BobaStyle { btn(label, hex_color("#FFF7DB"), hex_color("#888B7E"), false) }
+
+fn status_seg(text: &str, bg: Color) -> BobaStyle {
+    BobaStyle::new().fg(hex_color("#FFFDF5")).bg(bg).padding_y(0).padding_x(1)
+}
+
+struct LayoutView {
+    tabs: Tabs,
+    ok_btn: Button,
+    cancel_btn: Button,
+    active_tab: Mutable<usize>,
+    tabs_area: Mutex<Rect>,
+    ok_btn_area: Mutex<Rect>,
+    cancel_btn_area: Mutex<Rect>,
+}
+
+impl LayoutView {
+    fn new() -> Self {
+        let active_tab = Mutable::new(0);
+        Self {
+            tabs: Tabs::new(["Lip Gloss", "Blush", "Eye Shadow", "Mascara", "Foundation"])
+                .id_as("main-tabs")
+                .active(&active_tab),
+            ok_btn: Button::new("Yes")
+                .id_as("dialog-ok")
+                .variant(ButtonVariant::Primary)
+                .default_style(BobaStyle::new().fg(hex_color("#FFF7DB")).bg(hex_color("#F25D94")).padding_y(0).padding_x(1).margin_top(1).margin_right(2))
+                .hovered_style(BobaStyle::new().fg(hex_color("#FFF7DB")).bg(hex_color("#F25D94")).padding_y(0).padding_x(1).margin_top(1).margin_right(2).bold()),
+            cancel_btn: Button::new("Maybe")
+                .id_as("dialog-cancel")
+                .variant(ButtonVariant::Secondary)
+                .default_style(BobaStyle::new().fg(hex_color("#FFF7DB")).bg(hex_color("#888B7E")).padding_y(0).padding_x(1).margin_top(1)),
+            active_tab,
+            tabs_area: Mutex::new(Rect::new(0, 0, 0, 0)),
+            ok_btn_area: Mutex::new(Rect::new(0, 0, 0, 0)),
+            cancel_btn_area: Mutex::new(Rect::new(0, 0, 0, 0)),
+        }
+    }
+}
 
 /// Build a tab bar like lipgloss — individual tabs sit side-by-side with full
 /// borders, only the bottom edge differs between active (open) and inactive.
+/// DEPRECATED: Use Tabs component instead.
 fn build_tab_bar(labels: &[&str], active_idx: usize, border_fg: Color) -> Surface {
     let tab_style = Style::default().fg(border_fg);
     let active_style = Style::default().fg(border_fg).add_modifier(ratatui::style::Modifier::BOLD);
@@ -110,11 +165,11 @@ fn build_tab_bar(labels: &[&str], active_idx: usize, border_fg: Color) -> Surfac
     let current_width = rows[0].iter().map(|c| c.width().max(1)).sum::<usize>();
     let gap = WIDTH.saturating_sub(current_width);
     if gap > 0 {
-        let gap_top = (0..gap).map(|_| Cell::new("─", tab_style)).collect::<Vec<_>>();
-        let gap_mid = (0..gap).map(|_| Cell::new(" ", tab_style)).collect::<Vec<_>>();
-        rows[0].extend_from_slice(&gap_top);
-        rows[1].extend_from_slice(&gap_mid);
-        rows[2].extend_from_slice(&gap_top);
+        let empty = (0..gap).map(|_| Cell::new("─", tab_style)).collect::<Vec<_>>();
+        let line = (0..gap).map(|_| Cell::new(" ", tab_style)).collect::<Vec<_>>();
+        rows[0].extend_from_slice(&line);
+        rows[1].extend_from_slice(&line);
+        rows[2].extend_from_slice(&empty);
     }
 
     Surface { rows }
@@ -128,7 +183,7 @@ impl LayoutView {
         let special = light_dark(has_dark_bg, hex_color("#43BF6D"), hex_color("#73F59F"));
 
         // ── Tabs ──
-        let tabs_row = build_tab_bar(&["Lip Gloss", "Blush", "Eye Shadow", "Mascara", "Foundation"], 0, highlight);
+        let tabs_row = self.tabs.render_to_surface();
 
         // ── Title ──
         let title_style =
@@ -156,18 +211,13 @@ impl LayoutView {
         // ── Dialog ──
         let dialog_box = BobaStyle::new().border(Border::rounded()).border_fg(hex_color("#874BFD")).padding(1, 0, 1, 0);
 
-        let active_button =
-            BobaStyle::new().fg(hex_color("#FFF7DB")).bg(hex_color("#F25D94")).margin_top(1).margin_right(2).underlined();
-        let button = BobaStyle::new().fg(hex_color("#FFF7DB")).bg(hex_color("#888B7E")).margin_top(1);
-
-        let ok = active_button.render("Yes");
-        let cancel = button.render("Maybe");
         let question = BobaStyle::new().width(50).align(Alignment::Center, Position::Center).render_surface(
             &apply_gradient("Are you sure you want to eat marmalade?", hex_color("#EDFF82"), hex_color("#F25D94")),
         );
-        let buttons = join_horizontal(Position::Top, &[ok, cancel]);
-        let ui = join_vertical(Position::Center, &[question, buttons]);
-        let dialog_inner = dialog_box.render_surface(&ui);
+        let ok_surf = self.ok_btn.render_to_surface(&Theme::default());
+        let cancel_surf = self.cancel_btn.render_to_surface(&Theme::default());
+        let buttons = join_horizontal(Position::Top, &[ok_surf, cancel_surf]);
+        let dialog_inner = dialog_box.render_surface(&join_vertical(Position::Center, &[question, buttons]));
         let dialog = place_with_whitespace(
             WIDTH,
             9,
@@ -175,7 +225,7 @@ impl LayoutView {
             Position::Center,
             &dialog_inner,
             Style::default().fg(subtle),
-            "猫咪",
+            "l o r e m ",
         );
 
         // ── Color grid ──
@@ -214,7 +264,7 @@ impl LayoutView {
         let list2 = join_vertical(Position::Left, &[
             list_header_style.render("Actual Lip Gloss Vendors"),
             list_item("Glossier"),
-            list_item("Claire‘s Boutique"),
+            list_item("Claire's Boutique"),
             list_done("Nyx"),
             list_item("Mac"),
             list_done("Milk"),
@@ -253,26 +303,19 @@ impl LayoutView {
 
         // ── Status bar ──
         let light_dark_state = if has_dark_bg { "Dark" } else { "Light" };
-
-        let status_nugget = BobaStyle::new().fg(hex_color("#FFFDF5")).padding(0, 1, 0, 1);
-        let status_bar_style = BobaStyle::new()
+        let bar_style = BobaStyle::new()
             .fg(light_dark(has_dark_bg, hex_color("#343433"), hex_color("#C1C6B2")))
             .bg(light_dark(has_dark_bg, hex_color("#D9DCCF"), hex_color("#353533")));
-        let status_style =
-            BobaStyle::new().fg(hex_color("#FFFDF5")).bg(hex_color("#FF5F87")).padding(0, 1, 0, 1).margin_right(1);
-        let encoding_style = status_nugget.bg(hex_color("#A550DF")).align(Alignment::Right, Position::Center);
-        let fish_style = status_nugget.bg(hex_color("#6124DF"));
-        let status_text_style = BobaStyle::new().inherit(status_bar_style);
 
-        let status_key = status_style.render("STATUS");
-        let encoding = encoding_style.render("UTF-8");
-        let fish = fish_style.render("🍥 Fish Cake");
-        let remaining = WIDTH - status_key.width() - encoding.width() - fish.width();
-        let status_val = status_text_style.width(remaining as u16).render(&format!("Ravishingly {}!", light_dark_state));
+        let status_key = status_seg("STATUS", hex_color("#FF5F87")).render("STATUS");
+        let encoding = status_seg("UTF-8", hex_color("#A550DF")).align(Alignment::Right, Position::Center).render("UTF-8");
+        let fish = status_seg("🍥 Fish Cake", hex_color("#6124DF")).render("🍥 Fish Cake");
+        let remaining = WIDTH - status_key.cell_count_width() - encoding.cell_count_width() - fish.cell_count_width();
+        let status_val = BobaStyle::new().inherit(bar_style).width(remaining as u16).padding_x(1).render(&format!("Ravishingly {}!", light_dark_state));
 
         let bar = join_horizontal(Position::Top, &[status_key, status_val, encoding, fish]);
         // Apply status bar background/foreground across the full width.
-        let status_bar = BobaStyle::new().inherit(status_bar_style).width(WIDTH as u16).render_surface(&bar);
+        let status_bar = BobaStyle::new().inherit(bar_style).width(WIDTH as u16).render_surface(&bar);
 
         // ── Assemble document ──
         let doc = join_vertical(Position::Left, &[tabs_row, title_row, dialog, lists, history, status_bar]);
@@ -290,8 +333,16 @@ impl LayoutView {
             .render("Now with Compositing!")
     }
 
-    fn on_mouse(_ev: &MouseEvent) {
-        // Example: could check if click is in a tab zone and switch tabs
+    fn on_mouse(&self, ev: &MouseEvent) {
+        if let Ok(tabs_area) = self.tabs_area.lock() {
+            self.tabs.on_mouse(*tabs_area, ev);
+        }
+        if let Ok(ok_btn_area) = self.ok_btn_area.lock() {
+            self.ok_btn.on_mouse(*ok_btn_area, ev);
+        }
+        if let Ok(cancel_btn_area) = self.cancel_btn_area.lock() {
+            self.cancel_btn.on_mouse(*cancel_btn_area, ev);
+        }
     }
 }
 
@@ -302,14 +353,6 @@ impl View for LayoutView {
             if key.code == KeyCode::Char('q') {
                 ev.cancel();
                 app_for_quit.emit(AppEvent::Quit);
-            }
-        })
-        .forget();
-
-        // Mouse support — Low priority so it doesn't block other handlers
-        app.on(SubscriptionPriority::Low, move |ev| {
-            if let AppEvent::MouseEvent(mouse) = **ev {
-                LayoutView::on_mouse(&mouse);
             }
         })
         .forget();
@@ -332,10 +375,35 @@ impl View for LayoutView {
         let modal = self.build_modal();
 
         // Center the document in the available terminal area
-        let doc_w = doc.width().min(area.width as usize);
+        let doc_w = doc.cell_count_width().min(area.width as usize);
         let doc_h = doc.height().min(area.height as usize);
         let doc_x = ((area.width as usize).saturating_sub(doc_w)) / 2;
         let doc_y = ((area.height as usize).saturating_sub(doc_h)) / 2;
+
+        // Update component areas based on document layout
+        // Document structure: tabs(3) + title(5) + dialog(9) + lists(8) + history(~19) + status(~1)
+        // Tabs area: top of document
+        if let Ok(mut tabs_area) = self.tabs_area.lock() {
+            *tabs_area = Rect::new(doc_x as u16, doc_y as u16, doc_w as u16, 3);
+        }
+        // Dialog is centered at position (doc_x, doc_y + 8), with 96 width, 9 height
+        let dialog_x = doc_x;
+        let dialog_y = doc_y + 8;
+        // Dialog inner: question (1 row) + buttons (2 rows with margin_top(1))
+        // Buttons are at dialog inner bottom, after question
+        // dialog_box has padding(1, 0, 1, 0) = top:1, bottom:0, left:0, right:0
+        let dialog_inner_top = dialog_y + 1; // after dialog_box top padding
+        let buttons_y = dialog_inner_top + 1; // after question (1 row)
+        let ok_btn_width = self.ok_btn.render_to_surface(theme).cell_count_width();
+        let cancel_btn_width = self.cancel_btn.render_to_surface(theme).cell_count_width();
+        let buttons_width = ok_btn_width + cancel_btn_width + 2; // +2 for margin_right on ok_btn
+        let buttons_start_x = dialog_x + (96usize.saturating_sub(buttons_width)) / 2;
+        if let Ok(mut ok_btn_area) = self.ok_btn_area.lock() {
+            *ok_btn_area = Rect::new(buttons_start_x as u16, buttons_y as u16, ok_btn_width as u16, 1);
+        }
+        if let Ok(mut cancel_btn_area) = self.cancel_btn_area.lock() {
+            *cancel_btn_area = Rect::new((buttons_start_x + ok_btn_width + 2) as u16, buttons_y as u16, cancel_btn_width as u16, 1);
+        }
 
         // Modal positioned relative to the document center (lipgloss example offsets)
         let modal_x = doc_x + 58;
@@ -352,6 +420,6 @@ impl View for LayoutView {
 fn main() {
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
     rt.block_on(async {
-        App::new(LayoutView).run().await.unwrap();
+        App::new(LayoutView::new()).run().await.unwrap();
     });
 }

@@ -21,7 +21,8 @@ use {
 };
 
 const WIDTH: usize = 96;
-const COLUMN_WIDTH: usize = 30;
+const COLUMN_WIDTH: usize = WIDTH / 3;
+const LIST_INNER_WIDTH: usize = COLUMN_WIDTH - 1; // account for left border
 
 fn color_grid_surf(x_steps: usize, y_steps: usize) -> Surface {
     let colors =
@@ -30,7 +31,9 @@ fn color_grid_surf(x_steps: usize, y_steps: usize) -> Surface {
     for row in colors {
         let mut cells = Vec::new();
         for color in row {
-            cells.push(Cell::new("  ", Style::default().bg(color)));
+            let style = Style::default().bg(color);
+            cells.push(Cell::new(" ", style));
+            cells.push(Cell::new(" ", style));
         }
         rows.push(cells);
     }
@@ -50,6 +53,21 @@ fn apply_gradient(text: &str, from: Color, to: Color) -> Surface {
         row.push(Cell::new(ch.to_string(), style));
     }
     Surface { rows: vec![row] }
+}
+
+// ─── Style Helpers ───────────────────────────────────────────────────────────
+
+fn btn(label: &str, fg: Color, bg: Color, bold: bool) -> BobaStyle {
+    let mut s = BobaStyle::new().fg(fg).bg(bg).padding_y(0).padding_x(1).margin_top(1);
+    if bold { s = s.bold(); }
+    s
+}
+
+fn primary_btn(label: &str) -> BobaStyle { btn(label, hex_color("#FFF7DB"), hex_color("#F25D94"), true).margin_right(2) }
+fn secondary_btn(label: &str) -> BobaStyle { btn(label, hex_color("#FFF7DB"), hex_color("#888B7E"), false) }
+
+fn status_seg(text: &str, bg: Color) -> BobaStyle {
+    BobaStyle::new().fg(hex_color("#FFFDF5")).bg(bg).padding_y(0).padding_x(1)
 }
 
 /// Build a connected tab bar as a single surface.
@@ -150,30 +168,14 @@ fn build_document() -> Surface {
 
     // ── Dialog ──
     let dialog_box = BobaStyle::new().border(Border::rounded()).border_fg(hex_color("#874BFD")).padding(1, 0, 1, 0);
-
-    let active_button =
-        BobaStyle::new().fg(hex_color("#FFF7DB")).bg(hex_color("#F25D94")).margin_top(1).margin_right(2).underlined();
-    let button = BobaStyle::new().fg(hex_color("#FFF7DB")).bg(hex_color("#888B7E")).margin_top(1);
-
-    let ok = active_button.render("Yes");
-    let cancel = button.render("Maybe");
     let question = BobaStyle::new().width(50).align(Alignment::Center, Position::Center).render_surface(&apply_gradient(
         "Are you sure you want to eat marmalade?",
         hex_color("#EDFF82"),
         hex_color("#F25D94"),
     ));
-    let buttons = join_horizontal(Position::Top, &[ok, cancel]);
-    let ui = join_vertical(Position::Center, &[question, buttons]);
-    let dialog_inner = dialog_box.render_surface(&ui);
-    let dialog = place_with_whitespace(
-        WIDTH,
-        9,
-        Position::Center,
-        Position::Center,
-        &dialog_inner,
-        Style::default().fg(subtle),
-        "猫咪",
-    );
+    let buttons = join_horizontal(Position::Top, &[primary_btn("Yes").render("Yes"), secondary_btn("Maybe").render("Maybe")]);
+    let dialog_inner = dialog_box.render_surface(&join_vertical(Position::Center, &[question, buttons]));
+    let dialog = place_with_whitespace(WIDTH, 9, Position::Center, Position::Center, &dialog_inner, Style::default().fg(subtle), "l o r e m ");
 
     // ── Color grid ──
     let colors = color_grid_surf(14, 8);
@@ -186,7 +188,7 @@ fn build_document() -> Surface {
         .border_fg(subtle)
         .margin_right(1)
         .height(8)
-        .width((WIDTH / 3) as u16);
+        .width(LIST_INNER_WIDTH as u16);
 
     let check = BobaStyle::new().fg(special).padding_right(1).render("✓");
     let gray_done = light_dark(has_dark_bg, hex_color("#969B86"), hex_color("#696969"));
@@ -244,26 +246,18 @@ fn build_document() -> Surface {
 
     // ── Status bar ──
     let light_dark_state = if has_dark_bg { "Dark" } else { "Light" };
-
-    let status_nugget = BobaStyle::new().fg(hex_color("#FFFDF5")).padding(0, 1, 0, 1);
-    let status_bar_style = BobaStyle::new()
+    let bar_style = BobaStyle::new()
         .fg(light_dark(has_dark_bg, hex_color("#343433"), hex_color("#C1C6B2")))
         .bg(light_dark(has_dark_bg, hex_color("#D9DCCF"), hex_color("#353533")));
-    let status_style =
-        BobaStyle::new().fg(hex_color("#FFFDF5")).bg(hex_color("#FF5F87")).padding(0, 1, 0, 1).margin_right(1);
-    let encoding_style = status_nugget.bg(hex_color("#A550DF")).align(Alignment::Right, Position::Center);
-    let fish_style = status_nugget.bg(hex_color("#6124DF"));
-    let status_text_style = BobaStyle::new().inherit(status_bar_style);
 
-    let status_key = status_style.render("STATUS");
-    let encoding = encoding_style.render("UTF-8");
-    let fish = fish_style.render("🍥 Fish Cake");
-    let remaining = WIDTH - status_key.width() - encoding.width() - fish.width();
-    let status_val = status_text_style.width(remaining as u16).render(&format!("Ravishingly {}!", light_dark_state));
+    let status_key = status_seg("STATUS", hex_color("#FF5F87")).render("STATUS");
+    let encoding = status_seg("UTF-8", hex_color("#A550DF")).align(Alignment::Right, Position::Center).render("UTF-8");
+    let fish = status_seg("🍥 Fish Cake", hex_color("#6124DF")).render("🍥 Fish Cake");
+    let remaining = WIDTH - status_key.cell_count_width() - encoding.cell_count_width() - fish.cell_count_width();
+    let status_val = BobaStyle::new().inherit(bar_style).padding_left(1).width(remaining as u16).render(&format!("Ravishingly {}!", light_dark_state));
 
     let bar = join_horizontal(Position::Top, &[status_key, status_val, encoding, fish]);
-    // Apply status bar background/foreground across the full width.
-    let status_bar = BobaStyle::new().inherit(status_bar_style).width(WIDTH as u16).render_surface(&bar);
+    let status_bar = BobaStyle::new().inherit(bar_style).width(WIDTH as u16).render_surface(&bar);
 
     // ── Assemble document ──
     let doc = join_vertical(Position::Left, &[tabs_row, title_row, dialog, lists, history, status_bar]);
@@ -293,7 +287,7 @@ fn main() {
             let buf = f.buffer_mut();
 
             // Center the document
-            let doc_w = doc.width().min(area.width as usize);
+            let doc_w = doc.cell_count_width().min(area.width as usize);
             let doc_h = doc.height().min(area.height as usize);
             let doc_x = ((area.width as usize).saturating_sub(doc_w)) / 2;
             let doc_y = ((area.height as usize).saturating_sub(doc_h)) / 2;

@@ -179,6 +179,10 @@ impl BobaStyle {
 
     pub fn padding_left(self, v: u16) -> Self { self.padding(self.padding_top, self.padding_right, self.padding_bottom, v) }
 
+    pub fn padding_x(self, v: u16) -> Self { self.padding(self.padding_top, v, self.padding_bottom, v) }
+
+    pub fn padding_y(self, v: u16) -> Self { self.padding(v, self.padding_right, v, self.padding_left) }
+
     pub fn margin(self, top: u16, right: u16, bottom: u16, left: u16) -> Self {
         let mut me = self;
         me.margin_top = top;
@@ -197,6 +201,10 @@ impl BobaStyle {
     pub fn margin_bottom(self, v: u16) -> Self { self.margin(self.margin_top, self.margin_right, v, self.margin_left) }
 
     pub fn margin_left(self, v: u16) -> Self { self.margin(self.margin_top, self.margin_right, self.margin_bottom, v) }
+
+    pub fn margin_x(self, v: u16) -> Self { self.margin(self.margin_top, v, self.margin_bottom, v) }
+
+    pub fn margin_y(self, v: u16) -> Self { self.margin(v, self.margin_right, v, self.margin_left) }
 
     /// Inherit fg/bg/modifiers from another `BobaStyle`, keeping our own layout state.
     pub fn inherit(self, other: BobaStyle) -> Self {
@@ -285,8 +293,24 @@ impl BobaStyle {
     /// Apply layout transforms (padding, border, margin, align, clamp) to an existing surface.
     fn apply_layout(&self, mut surf: Surface, content_w: usize, content_h: usize) -> Surface {
         let blank = Cell::blank(self.inner);
-        let width = surf.width();
+        let width = surf.cell_count_width();
         let height = surf.height();
+
+        // Clamp BEFORE padding/border expansion
+        if let Some(w) = self.width {
+            let target = w as usize;
+            if width > target {
+                for row in &mut surf.rows {
+                    row.truncate(target);
+                }
+            }
+        }
+        if let Some(h) = self.height {
+            let target = h as usize;
+            if height > target {
+                surf.rows.truncate(target);
+            }
+        }
 
         // Horizontal alignment
         let shift_x = match self.align_h {
@@ -297,7 +321,7 @@ impl BobaStyle {
         if shift_x > 0 && content_w < width {
             let mut shifted = Surface::new(width, height, &blank);
             for y in 0..surf.height() {
-                for x in 0..surf.width() {
+                for x in 0..surf.cell_count_width() {
                     if let Some(src) = surf.cell_mut(x, y) {
                         let cell = src.clone();
                         if let Some(dst) = shifted.cell_mut(shift_x + x, y) {
@@ -318,7 +342,7 @@ impl BobaStyle {
         if shift_y > 0 && content_h < height {
             let mut shifted = Surface::new(width, height, &blank);
             for y in 0..surf.height() {
-                for x in 0..surf.width() {
+                for x in 0..surf.cell_count_width() {
                     if let Some(src) = surf.cell_mut(x, y) {
                         let cell = src.clone();
                         if let Some(dst) = shifted.cell_mut(x, shift_y + y) {
@@ -336,7 +360,7 @@ impl BobaStyle {
             let ph = height + self.padding_top as usize + self.padding_bottom as usize;
             let mut padded = Surface::new(pw, ph, &blank);
             for y in 0..surf.height() {
-                for x in 0..surf.width() {
+                for x in 0..surf.cell_count_width() {
                     if let Some(src) = surf.cell_mut(x, y) {
                         let cell = src.clone();
                         if let Some(dst) = padded.cell_mut(self.padding_left as usize + x, self.padding_top as usize + y) {
@@ -359,11 +383,14 @@ impl BobaStyle {
 
         // Margin
         if self.margin_top > 0 || self.margin_bottom > 0 || self.margin_left > 0 || self.margin_right > 0 {
-            let mw = surf.width() + self.margin_left as usize + self.margin_right as usize;
+            let mw = surf.cell_count_width() + self.margin_left as usize + self.margin_right as usize;
             let mh = surf.height() + self.margin_top as usize + self.margin_bottom as usize;
-            let mut margined = Surface::new(mw, mh, &blank);
+            let mut margin_style = self.inner;
+            margin_style.bg = None;
+            let margin_blank = Cell::blank(margin_style);
+            let mut margined = Surface::new(mw, mh, &margin_blank);
             for y in 0..surf.height() {
-                for x in 0..surf.width() {
+                for x in 0..surf.cell_count_width() {
                     if let Some(src) = surf.cell_mut(x, y) {
                         let cell = src.clone();
                         if let Some(dst) = margined.cell_mut(self.margin_left as usize + x, self.margin_top as usize + y) {
@@ -373,37 +400,6 @@ impl BobaStyle {
                 }
             }
             surf = margined;
-        }
-
-        // Clamp final size to explicit width/height
-        if let Some(w) = self.width {
-            let target = w as usize;
-            let current = surf.width();
-            if current > target {
-                for row in &mut surf.rows {
-                    row.truncate(target);
-                }
-            } else if current < target {
-                let fill = Cell::blank(self.inner);
-                for row in &mut surf.rows {
-                    while row.len() < target {
-                        row.push(fill.clone());
-                    }
-                }
-            }
-        }
-        if let Some(h) = self.height {
-            let target = h as usize;
-            let current = surf.height();
-            if current > target {
-                surf.rows.truncate(target);
-            } else if current < target {
-                let fill = Cell::blank(self.inner);
-                let w = surf.width();
-                for _ in 0..(target - current) {
-                    surf.rows.push((0..w).map(|_| fill.clone()).collect());
-                }
-            }
         }
 
         surf
@@ -441,9 +437,21 @@ impl BobaStyle {
     /// Wrap an existing [`Surface`] with this style's layout (padding,
     /// border, margin, alignment, clamp).
     pub fn render_surface(&self, surf: &Surface) -> Surface {
-        let content_w = surf.width();
+        let content_w = surf.cell_count_width();
         let content_h = surf.height();
-        let mut owned = Surface::new(content_w, content_h, &Cell::blank(self.inner));
+
+        let total_extra = self.padding_left as usize + self.padding_right as usize
+            + self.margin_left as usize + self.margin_right as usize;
+        let border_extra = self.border.as_ref().map(|b| b.vertical_size() + b.horizontal_size()).unwrap_or(0);
+        let total_extra = total_extra + border_extra;
+
+        let content_target = self.width.map(|w| w as usize).unwrap_or(content_w);
+        let target_w = content_target + total_extra;
+        let target_h = self.height.map(|h| h as usize).unwrap_or(content_h)
+            + self.padding_top as usize + self.padding_bottom as usize
+            + self.margin_top as usize + self.margin_bottom as usize;
+
+        let mut owned = Surface::new(target_w, target_h, &Cell::blank(self.inner));
         for (y, row) in surf.rows.iter().enumerate() {
             for (x, cell) in row.iter().enumerate() {
                 if let Some(dst) = owned.cell_mut(x, y) {
@@ -585,3 +593,37 @@ pub fn light_dark<T>(is_dark: bool, light: T, dark: T) -> T { if is_dark { dark 
 /// Mock background detection. Returns `true` (dark) for the MVP.
 /// A future implementation can query the terminal via OSC 10/11.
 pub fn has_dark_background() -> bool { true }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::style::Color;
+
+    #[test]
+    fn padding_has_background() {
+        let style = BobaStyle::new().bg(Color::Red).padding_all(1);
+        let surf = style.render("X");
+        // Content area is 1x1, padding adds 1 on all sides -> 3x3
+        // Center cell (1,1) should have content with Red bg
+        assert_eq!(surf.rows[1][1].style.bg, Some(Color::Red));
+        // Padding cells should also have Red bg
+        assert_eq!(surf.rows[0][1].style.bg, Some(Color::Red));
+        assert_eq!(surf.rows[2][1].style.bg, Some(Color::Red));
+        assert_eq!(surf.rows[1][0].style.bg, Some(Color::Red));
+        assert_eq!(surf.rows[1][2].style.bg, Some(Color::Red));
+    }
+
+    #[test]
+    fn margin_has_no_background() {
+        let style = BobaStyle::new().bg(Color::Red).margin_all(1);
+        let surf = style.render("X");
+        // Content area is 1x1, margin adds 1 on all sides -> 3x3
+        // Center cell (1,1) should have content with Red bg
+        assert_eq!(surf.rows[1][1].style.bg, Some(Color::Red));
+        // Margin cells should have no bg
+        assert_eq!(surf.rows[0][1].style.bg, None);
+        assert_eq!(surf.rows[2][1].style.bg, None);
+        assert_eq!(surf.rows[1][0].style.bg, None);
+        assert_eq!(surf.rows[1][2].style.bg, None);
+    }
+}
