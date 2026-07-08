@@ -1,168 +1,77 @@
 use {
-    crate::{
-        data::{SearchResult, data},
-        events::{SubscriptionHandle, SubscriptionPriority},
-        ui::{
-            components::{Focusable, InputEvent, input::Input, radio::Radio},
-            views::{hcenter, home::BANNER_FONT, results::ResultsView, vstack},
-        },
+    bobatea::{
+        components::{input::Input, list::List, style::BobaStyle},
+        theme::Theme,
     },
     futures_signals::signal::Mutable,
-    ratatui::{
-        layout::Constraint,
-        prelude::*,
-        widgets::{Paragraph, WidgetRef},
-    },
-    std::sync::Arc,
-    to_and_fro::ToAndFro,
-    tokio::spawn,
-    tracing::warn,
+    ratatui::{prelude::*, text::Span},
 };
 
-#[derive(ToAndFro)]
+pub const BANNER_FONT: &str = include_str!("../../../../_assets/Pagga.tlf");
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchType {
     Music,
     Movie,
     Series,
 }
 
-pub struct SearchView {
-    banner: Vec<String>,
-    input: Arc<Input>,
-    radio: Arc<Radio>,
-    search_ty: Mutable<SearchType>,
+impl SearchType {
+    pub fn list() -> Vec<String> { vec!["Music".to_string(), "Movie".to_string(), "Series".to_string()] }
 
-    results: Mutable<Option<ResultsView>>,
-
-    _radio: Option<SubscriptionHandle<InputEvent<usize>>>,
-    _input: Option<SubscriptionHandle<InputEvent<String>>>,
+    pub fn from_index(idx: usize) -> Self {
+        match idx {
+            0 => SearchType::Music,
+            1 => SearchType::Movie,
+            2 => SearchType::Series,
+            _ => SearchType::Music,
+        }
+    }
 }
 
-#[allow(clippy::new_without_default)]
-impl SearchView {
+pub struct SearchPanel {
+    banner: Vec<String>,
+    input: Input,
+    search_type: Mutable<usize>,
+}
+
+impl SearchPanel {
     pub fn new() -> Self {
         let flet = figlet_rs::FIGlet::from_content(BANNER_FONT).unwrap();
         let text = flet.convert("search").unwrap().to_string();
 
-        let mut this = Self {
-            banner: text.lines().map(|l| l.to_string()).collect::<Vec<_>>(),
-            search_ty: Mutable::new(SearchType::Music),
-
-            input: Input::new("", "").into(),
-            radio: Radio::new(SearchType::list()).into(),
-
-            results: Mutable::new(None),
-
-            _radio: None,
-            _input: None,
-        };
-
-        this._radio = Some(this.radio.on(SubscriptionPriority::Low, {
-            let st = this.search_ty.clone();
-            move |ev| {
-                if let InputEvent::Submit(ev) = (**ev).clone() {
-                    st.set(SearchType::list()[ev])
-                }
-            }
-        }));
-
-        this._input = Some(this.input.on(SubscriptionPriority::High, {
-            let rs = this.results.clone();
-            let st = this.search_ty.clone();
-            let inp = this.input.clone();
-            let rad = this.radio.clone();
-
-            move |ev| {
-                let rs = rs.clone();
-                let inp = inp.clone();
-                let rad = rad.clone();
-                let st = st.clone();
-
-                if let InputEvent::Submit(q) = (**ev).clone() {
-                    inp.blur();
-                    rad.blur();
-                    inp.load(true);
-
-                    spawn(async move {
-                        let search_type = st.get();
-                        match search_type {
-                            SearchType::Music => match data().music((q, 0)).await {
-                                Ok(v) => {
-                                    rs.set(
-                                        Some(ResultsView::new(v.into_iter().map(SearchResult::from).collect(), {
-                                            let rs = rs.clone();
-                                            move || {
-                                                rs.set(None);
-                                                inp.focus();
-                                                rad.focus();
-                                                inp.load(false);
-                                            }
-                                        }))
-                                    )
-                                }
-                                Err(e) => {
-                                    warn!("Failed to search: {e:?}");
-                                    inp.focus();
-                                    rad.focus();
-                                    inp.load(false);
-                                }
-                            },
-                            SearchType::Movie | SearchType::Series => match data().media((q, 0)).await {
-                                Ok(v) => {
-                                    rs.set(
-                                        Some(ResultsView::new(v.into_iter().map(SearchResult::from).collect(), {
-                                            let rs = rs.clone();
-                                            move || {
-                                                rs.set(None);
-                                                inp.focus();
-                                                rad.focus();
-                                                inp.load(false);
-                                            }
-                                        }))
-                                    )
-                                }
-                                Err(e) => {
-                                    warn!("Failed to search: {e:?}");
-                                    inp.focus();
-                                    rad.focus();
-                                    inp.load(false);
-                                }
-                            },
-                        }
-                    });
-                }
-            }
-        }));
-
-        this.input.focus();
-        this.radio.focus();
-
-        this
+        Self {
+            banner: text.lines().map(|l| l.to_string()).collect(),
+            input: Input::new("Search"),
+            search_type: Mutable::new(0),
+        }
     }
-}
 
-impl WidgetRef for SearchView {
-    fn render_ref(&self, area: Rect, buf: &mut Buffer)
-    where
-        Self: Sized,
-    {
-        if let Some(res) = self.results.lock_ref().as_ref() {
-            res.render_ref(area, buf);
+    pub fn render(&self, area: Rect, buf: &mut Buffer, theme: &Theme) {
+        if area.width == 0 || area.height == 0 {
             return;
         }
 
-        let text = Text::from_iter(self.banner.iter().map(|l| Line::from(Span::raw(l.clone()))));
+        let banner_text = self.banner.join("\n");
+        let banner_style = BobaStyle::new().fg(theme.palette.accent.to_rgb()).bold();
 
-        let w = text.width();
-        let h = text.height();
+        let surf = banner_style.render(&banner_text);
+        let surf_h = surf.height() as u16;
 
-        let inner = area.centered(Constraint::Length((w as u16).max(area.width.min(32))), Constraint::Fill(1));
-        let layout = vstack(&[h as u16, 3, 5], inner);
+        let input_area =
+            Rect { x: area.x + 2, y: area.y + surf_h + 2, width: area.width.saturating_sub(4).min(40), height: 3 };
 
-        Paragraph::new(text).alignment(HorizontalAlignment::Center).render(layout[0], buf);
+        let radio_area = Rect { x: area.x + 2, y: input_area.y + 5, width: area.width.saturating_sub(4).min(40), height: 3 };
 
-        self.input.render_ref(layout[1], buf);
+        surf.blit(buf, area.x + 2, area.y);
 
-        self.radio.render_ref(hcenter(w as u16, layout[2]), buf);
+        self.input.render_to_buf(input_area, buf, theme);
+
+        let search_type_list = List::new(SearchType::list());
+        search_type_list.render_to_buf(radio_area, buf, theme);
     }
+}
+
+impl Default for SearchPanel {
+    fn default() -> Self { Self::new() }
 }

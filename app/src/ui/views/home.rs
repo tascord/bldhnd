@@ -1,55 +1,61 @@
 use {
-    crate::ui::{components::rainbow::Rainbow, views::vstack},
+    bobatea::{components::style::BobaStyle, theme::Theme},
     rand::RngExt,
-    ratatui::{
-        layout::{Constraint, HorizontalAlignment::Center},
-        prelude::*,
-        widgets::{Paragraph, WidgetRef},
-    },
+    ratatui::{prelude::*, text::Span},
 };
 
-pub struct HomeView {
-    grad: Rainbow,
-    banner: (Vec<String>, String),
+pub const BANNER_FONT: &str = include_str!("../../../../_assets/Pagga.tlf");
+pub const SPLASHES: &str = include_str!("../../../../_assets/splash.txt");
+
+pub struct HomePanel {
+    banner: Vec<String>,
+    splash: String,
 }
 
-pub static SPLASHES: &str = include_str!("../../../../_assets/splash.txt");
-pub static BANNER_FONT: &str = include_str!("../../../../_assets/Pagga.tlf");
-
-#[allow(clippy::new_without_default)]
-impl HomeView {
+impl HomePanel {
     pub fn new() -> Self {
         let flet = figlet_rs::FIGlet::from_content(BANNER_FONT).unwrap();
         let text = flet.convert("bldhnd").unwrap().to_string();
 
-        Self {
-            grad: Rainbow::new(),
-            banner: (text.lines().map(|l| l.to_string()).collect::<Vec<_>>(), {
-                let shs = SPLASHES.lines().collect::<Vec<_>>();
-                shs[rand::rng().random_range(0..shs.len())].to_string()
-            }),
+        let shs = SPLASHES.lines().collect::<Vec<_>>();
+        let splash = shs[rand::rng().random_range(0..shs.len())].to_string();
+
+        Self { banner: text.lines().map(|l| l.to_string()).collect(), splash }
+    }
+
+    pub fn render(&self, area: Rect, buf: &mut Buffer, theme: &Theme) {
+        if area.width == 0 || area.height == 0 {
+            return;
         }
+
+        let banner_text = self.banner.join("\n");
+        let banner_style = BobaStyle::new().fg(theme.palette.accent.to_rgb()).bold();
+
+        let surf = banner_style.render(&banner_text);
+        let surf_w = surf.columns() as u16;
+        let surf_h = surf.height() as u16;
+
+        let content_width = self.splash.len().max(surf_w as usize) as u16;
+        let content_area = Rect {
+            x: area.x + (area.width.saturating_sub(content_width + 4)) / 2,
+            y: area.y + (area.height.saturating_sub(surf_h + 3)) / 2,
+            width: content_width + 4,
+            height: surf_h + 3,
+        };
+
+        let banner_area = Rect { x: content_area.x + 2, y: content_area.y, width: surf_w, height: surf_h };
+
+        surf.blit(buf, banner_area.x, banner_area.y);
+
+        let splash_style = BobaStyle::new().fg(theme.global_fg).dim();
+
+        let splash_surf = splash_style.render(&self.splash);
+        let splash_area =
+            Rect { x: content_area.x + 2, y: banner_area.y + surf_h + 1, width: self.splash.len() as u16, height: 1 };
+        splash_surf.blit(buf, splash_area.x, splash_area.y);
     }
 }
 
-impl WidgetRef for HomeView {
-    fn render_ref(&self, area: Rect, buf: &mut Buffer)
-    where
-        Self: Sized,
-    {
-        let text =
-            self.grad.apply(&Text::from(self.banner.0.iter().map(|l| Line::from(Span::raw(l.clone()))).collect::<Vec<_>>()));
-
-        let w = text.width();
-        let h = text.height();
-
-        let inner = area.centered(Constraint::Length(w.max(self.banner.1.len()) as u16), Constraint::Fill(1));
-        let layout = vstack(&[h as u16, 1], inner);
-
-        // Figlet Banner
-        Paragraph::new(text).alignment(HorizontalAlignment::Center).render(layout[0], buf);
-
-        // Splash Text
-        Paragraph::new(self.banner.1.clone()).alignment(Center).render(layout[1], buf);
-    }
+impl Default for HomePanel {
+    fn default() -> Self { Self::new() }
 }

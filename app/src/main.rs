@@ -1,4 +1,4 @@
-use bldhnd::ui::views::Model;
+use bldhnd::ui::views::BldhndView;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> { ratatui::run(Model::run) }
+async fn main() -> anyhow::Result<()> { bobatea::App::new(BldhndView::new()).run().await }

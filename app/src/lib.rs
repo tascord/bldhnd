@@ -12,7 +12,6 @@ use {
 };
 
 pub mod data;
-pub mod events;
 pub mod fs;
 pub mod logs;
 pub mod ui;

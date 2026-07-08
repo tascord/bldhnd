@@ -1,114 +1,65 @@
 use {
-    crate::{
-        config,
-        events::{SubscriptionHandle, SubscriptionPriority},
-        ui::{
-            components::{
-                Focusable, InputEvent,
-                button::Button,
-                modal::{self, Modal},
-                scroll::{ScrollText, Scroller, register_scroller_blur, register_scroller_focus},
-            },
-            views::home::BANNER_FONT,
-        },
+    crate::config,
+    bobatea::{
+        components::{list::List, style::BobaStyle},
+        theme::Theme,
     },
-    ratatui::{
-        layout::Constraint,
-        prelude::*,
-        widgets::{Paragraph, WidgetRef},
-    },
-    std::sync::Arc,
+    ratatui::prelude::*,
 };
 
-pub struct SettingsView {
+pub const BANNER_FONT: &str = include_str!("../../../../_assets/Pagga.tlf");
+
+pub struct SettingsPanel {
     banner: Vec<String>,
-    scroller: Arc<Scroller>,
-    _subs: (Vec<SubscriptionHandle<InputEvent<()>>>, ()),
+    volumes: Vec<String>,
 }
 
-#[allow(clippy::new_without_default)]
-impl SettingsView {
+impl SettingsPanel {
     pub fn new() -> Self {
         let flet = figlet_rs::FIGlet::from_content(BANNER_FONT).unwrap();
         let text = flet.convert("settings").unwrap().to_string();
 
-        let mut subs = (Vec::new(), ());
-        let scroller = Scroller::new();
+        let cfg = config().get_cloned();
+        let volumes: Vec<String> = cfg
+            .volumes
+            .iter()
+            .enumerate()
+            .map(|(i, v)| format!("[{}] {} ({}) - {:?}", i + 1, v.name, v.path, v.max_size_gb))
+            .collect();
 
-        Self::refresh_volumes(&scroller);
-        let scroller = Arc::new(scroller);
-
-        let add_btn = Button::new("Add New");
-        subs.0.push(add_btn.on(SubscriptionPriority::Low, {
-            let scroller = scroller.clone();
-            move |ev| {
-                if let InputEvent::Submit(_) = (**ev).clone() {
-                    let m = Modal::new("Add new Volume", Scroller::new());
-                    m.on(SubscriptionPriority::Low, {
-                        let scroller = scroller.clone();
-                        move |ev| {
-                            if let InputEvent::Blur = (**ev).clone() {
-                                scroller.focus()
-                            }
-                        }
-                    });
-
-                    modal::modal().push(m);
-                    scroller.blur();
-                }
-            }
-        }));
-
-        scroller.item_ref(add_btn);
-
-        let this = Self { banner: text.lines().map(|l| l.to_string()).collect::<Vec<_>>(), _subs: subs, scroller };
-
-        this.scroller.focus();
-        register_scroller_focus(Box::new({
-            let scroller = this.scroller.clone();
-            move || scroller.focus()
-        }));
-        register_scroller_blur(Box::new({
-            let scroller = this.scroller.clone();
-            move || scroller.blur()
-        }));
-        this
+        Self { banner: text.lines().map(|l| l.to_string()).collect(), volumes }
     }
 
-    fn refresh_volumes(scroller: &Scroller) {
-        let c = config().get_cloned();
-        scroller.item_ref(ScrollText::new(format!("Volumes ({}): ", c.volumes.len())));
-
-        for (i, v) in c.volumes.iter().enumerate() {
-            let label = format!("[{}] {} ({}) - {:?}", i + 1, v.name, v.path, v.max_size_gb);
-            scroller.item_ref(ScrollText::new(label));
+    pub fn render(&self, area: Rect, buf: &mut Buffer, theme: &Theme) {
+        if area.width == 0 || area.height == 0 {
+            return;
         }
+
+        let banner_text = self.banner.join("\n");
+        let banner_style = BobaStyle::new().fg(theme.palette.accent.to_rgb()).bold();
+
+        let surf = banner_style.render(&banner_text);
+        surf.blit(buf, area.x + 2, area.y);
+
+        let surf_h = surf.height() as u16;
+        let content_area = Rect {
+            x: area.x + 2,
+            y: area.y + surf_h + 1,
+            width: area.width.saturating_sub(4),
+            height: area.height.saturating_sub(surf_h + 2),
+        };
+
+        let mut all_items = vec!["Volumes:".to_string()];
+        all_items.extend(self.volumes.clone());
+        if self.volumes.is_empty() {
+            all_items.push("(No volumes configured)".to_string());
+        }
+
+        let list = List::new(all_items).without_border();
+        list.render_to_buf(content_area, buf, theme);
     }
 }
 
-impl WidgetRef for SettingsView {
-    fn render_ref(&self, area: Rect, buf: &mut Buffer)
-    where
-        Self: Sized,
-    {
-        let text = Text::from_iter(self.banner.iter().map(|l| Line::from(Span::raw(l.clone()))));
-
-        let layout =
-            Layout::vertical([Constraint::Length(text.height() as u16), Constraint::Length(3), Constraint::Fill(1)])
-                .split(area);
-
-        Paragraph::new(text).render(layout[0], buf);
-
-        Paragraph::new(Text::from_iter([
-            Line::raw(""),
-            Line::styled(
-                std::iter::repeat_n(' ', layout[1].width as usize).collect::<String>(),
-                Style::new().add_modifier(Modifier::CROSSED_OUT),
-            ),
-            Line::raw(""),
-        ]))
-        .render(layout[1], buf);
-
-        self.scroller.render_ref(layout[2], buf);
-    }
+impl Default for SettingsPanel {
+    fn default() -> Self { Self::new() }
 }

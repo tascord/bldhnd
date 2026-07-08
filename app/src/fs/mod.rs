@@ -1,19 +1,19 @@
-use std::{
-    env,
-    fs::create_dir_all,
-    ops::Deref,
-    path::{Path, PathBuf},
-    sync::{Arc, LazyLock},
+use {
+    crate::config,
+    bobatea::events::EventTarget,
+    futures_signals::signal::Mutable,
+    std::{
+        env,
+        fs::create_dir_all,
+        ops::Deref,
+        path::{Path, PathBuf},
+        sync::{Arc, LazyLock},
+    },
 };
-
-use crate::{config, events::EventTarget};
-use futures_signals::signal::Mutable;
 
 static LIBRARY: LazyLock<Arc<Library>> = LazyLock::new(|| Arc::new(Library::new()));
 
-pub fn library() -> Arc<Library> {
-    LIBRARY.clone()
-}
+pub fn library() -> Arc<Library> { LIBRARY.clone() }
 
 pub fn working() -> PathBuf {
     let p = Path::new(&env::home_dir().expect("No home dir")).join(".cache/").join("bldhnd");
@@ -43,18 +43,14 @@ pub struct VolumeStats {
 }
 
 impl VolumeStats {
-    fn new(path: PathBuf) -> Self {
-        Self { path, size_bytes: 0, file_count: 0 }
-    }
+    fn new(path: PathBuf) -> Self { Self { path, size_bytes: 0, file_count: 0 } }
 
     fn add_file(&mut self, size: u64) {
         self.size_bytes += size;
         self.file_count += 1;
     }
 
-    pub fn size_gb(&self) -> f32 {
-        self.size_bytes as f32 / (1024.0 * 1024.0 * 1024.0)
-    }
+    pub fn size_gb(&self) -> f32 { self.size_bytes as f32 / (1024.0 * 1024.0 * 1024.0) }
 }
 
 impl File {
@@ -97,9 +93,7 @@ pub struct Library {
 impl Deref for Library {
     type Target = EventTarget<LibraryEvent>;
 
-    fn deref(&self) -> &Self::Target {
-        &self.ev
-    }
+    fn deref(&self) -> &Self::Target { &self.ev }
 }
 
 #[allow(clippy::new_without_default)]
@@ -108,15 +102,13 @@ impl Library {
     pub fn new() -> Self {
         Self {
             scanning: Mutable::new(false),
-            ev: EventTarget::new(),
+            ev: EventTarget::new("library"),
             files: Mutable::new(Vec::new()),
             volume_stats: Mutable::new(Vec::new()),
         }
     }
 
-    pub fn volume_stats(&self) -> Vec<VolumeStats> {
-        self.volume_stats.lock_ref().clone()
-    }
+    pub fn volume_stats(&self) -> Vec<VolumeStats> { self.volume_stats.lock_ref().clone() }
 
     pub fn can_download_to_volume(volume_idx: usize, size_bytes: u64) -> bool {
         let binding = config();
@@ -161,17 +153,17 @@ impl Library {
 
                 if path.is_dir() {
                     let entries = walkdir::WalkDir::new(path).into_iter().filter_map(|e| e.ok());
-                        for entry in entries {
-                            if entry.file_type().is_file() {
-                                if let Ok(metadata) = entry.metadata() {
-                                    stats.add_file(metadata.len());
-                                    ev.emit(LibraryEvent::FoundEntry {
-                                        volume_idx: idx,
-                                        path: entry.path().display().to_string(),
-                                    });
-                                }
+                    for entry in entries {
+                        if entry.file_type().is_file() {
+                            if let Ok(metadata) = entry.metadata() {
+                                stats.add_file(metadata.len());
+                                ev.emit(LibraryEvent::FoundEntry {
+                                    volume_idx: idx,
+                                    path: entry.path().display().to_string(),
+                                });
                             }
                         }
+                    }
                 }
 
                 all_stats.push(stats);

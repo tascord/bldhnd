@@ -1,17 +1,15 @@
-use crate::ui::components::scroll::{ScrollText, Scroller};
-use ratatui::prelude::Text;
-use std::sync::Arc;
-use tracing::{
-    Level,
-    field::{Field, Visit},
+use {
+    futures_signals::signal::Mutable,
+    std::{
+        sync::{Arc, LazyLock},
+        time::Instant,
+    },
+    tracing::{
+        Level,
+        field::{Field, Visit},
+    },
+    tracing_subscriber::layer::{Context, Layer},
 };
-use tracing_subscriber::layer::{Context, Layer};
-
-static LOG_SCROLLER: std::sync::LazyLock<Arc<Scroller>> = std::sync::LazyLock::new(|| Arc::new(Scroller::new()));
-
-pub fn scroller() -> Arc<Scroller> {
-    LOG_SCROLLER.clone()
-}
 
 #[derive(Default)]
 struct MessageVisitor(String);
@@ -52,14 +50,46 @@ fn strip_ansi(s: &str) -> String {
     out
 }
 
+struct LogEntry {
+    idx: usize,
+    message: String,
+    timestamp: Instant,
+}
+
+pub struct LogStore {
+    entries: Mutable<Vec<LogEntry>>,
+}
+
+impl LogStore {
+    pub fn new() -> Self { Self { entries: Mutable::new(Vec::new()) } }
+
+    pub fn push(&self, message: String, idx: usize) {
+        let mut entries = self.entries.lock_mut();
+        entries.push(LogEntry { idx, message, timestamp: Instant::now() });
+        while entries.len() > 200 {
+            entries.remove(0);
+        }
+    }
+
+    pub fn entries(&self) -> Vec<String> {
+        self.entries.lock_ref().iter().map(|e| format!("{:03} {}", e.idx, e.message)).collect()
+    }
+}
+
+impl Default for LogStore {
+    fn default() -> Self { Self::new() }
+}
+
+static LOG_STORE: LazyLock<Arc<LogStore>> = LazyLock::new(|| Arc::new(LogStore::new()));
+
+pub fn log_store() -> Arc<LogStore> { LOG_STORE.clone() }
+
 pub struct LogsLayer {
     min_level: Level,
 }
 
 impl Default for LogsLayer {
-    fn default() -> Self {
-        Self { min_level: Level::TRACE }
-    }
+    fn default() -> Self { Self { min_level: Level::TRACE } }
 }
 
 impl<S> Layer<S> for LogsLayer
@@ -81,25 +111,14 @@ where
         }
 
         let parsed = strip_ansi(&text);
-        let sc = scroller();
+        let store = log_store();
 
-        let idx = sc.items.lock_ref().len();
-        let numbered = format!("{:03} {}", idx + 1, parsed);
-
-        let t: ScrollText = ScrollText::new(Text::from(numbered));
-        sc.item_ref(t);
-
-        let mut items_lock = sc.items.lock_mut();
-        while items_lock.len() > 200 {
-            items_lock.remove(0);
-        }
+        let idx = store.entries.lock_ref().len();
+        store.push(parsed, idx + 1);
     }
 }
 
 pub fn install_tracing() {
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-    tracing_subscriber::registry()
-        .with(crate::ui::components::sonner::SonnerLayer::default())
-        .with(LogsLayer::default())
-        .init();
+    tracing_subscriber::registry().with(LogsLayer::default()).init();
 }
