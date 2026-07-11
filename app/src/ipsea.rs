@@ -1,0 +1,210 @@
+use {
+    crate::Config,
+    ipsea::{self, StreamResponse},
+    serde::{Deserialize, Serialize},
+    std::{
+        io::{Read, Write},
+        path::Path,
+    },
+};
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "method")]
+pub enum Request {
+    GetConfig,
+    UpdateConfig {
+        config: Config,
+    },
+    CommitConfig,
+    Search {
+        query: String,
+        media_type: String,
+    },
+    ListDownloads,
+    GetDownload {
+        id: u64,
+    },
+    StartDownload {
+        backend: String,
+        title: String,
+        filename: String,
+        url: String,
+        size: u64,
+        year: Option<u32>,
+        media_type: String,
+    },
+    DownloadProgress {
+        id: u64,
+    },
+    CancelDownload {
+        id: u64,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "method")]
+pub enum Response {
+    GetConfig { config: Config },
+    UpdateConfig,
+    CommitConfig,
+    Search { results: Vec<SearchHit> },
+    ListDownloads { downloads: Vec<DownloadInfo> },
+    GetDownload { download: Option<DownloadInfo> },
+    StartDownload { id: u64 },
+    DownloadProgress { progress: ProgressInfo },
+    CancelDownload,
+    Error { message: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchHit {
+    pub backend: String,
+    pub title: String,
+    pub artist: Option<String>,
+    pub year: Option<i32>,
+    pub size: u64,
+    pub ext: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownloadInfo {
+    pub id: u64,
+    pub backend: String,
+    pub title: String,
+    pub filename: String,
+    pub download_path: Option<String>,
+    pub size: u64,
+    pub year: Option<u32>,
+    pub media_type: String,
+    pub state: String,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProgressInfo {
+    pub bytes_done: u64,
+    pub total_bytes: u64,
+    pub state: String,
+}
+
+pub struct Client {
+    socket_path: std::path::PathBuf,
+}
+
+impl Client {
+    pub fn new(socket_path: &Path) -> Self {
+        let socket_path_str = socket_path.to_string_lossy();
+        let socket_path = if socket_path_str.starts_with('/') {
+            socket_path.to_path_buf()
+        } else {
+            std::path::PathBuf::from("/tmp").join(format!("{}.sock", socket_path_str))
+        };
+        Client { socket_path }
+    }
+
+    pub fn connect() -> Self {
+        let socket_path = if let Ok(r) = std::env::var("XDG_RUNTIME_DIR") {
+            std::path::PathBuf::from(r).join("bldhnd.sock")
+        } else if let Ok(r) = std::env::var("BLDHND_DIR") {
+            std::path::PathBuf::from(r).join("bldhnd.sock")
+        } else {
+            std::path::PathBuf::from("/run/bldhnd/bldhnd.sock")
+        };
+        Client { socket_path }
+    }
+
+    fn send_request(&self, req: Request) -> anyhow::Result<Response> {
+        let mut stream = std::os::unix::net::UnixStream::connect(&self.socket_path)?;
+
+        let data = serde_json::to_vec(&req)?;
+        let len_bytes = (data.len() as u32).to_le_bytes();
+        stream.write_all(&len_bytes)?;
+        stream.write_all(&data)?;
+        stream.flush()?;
+
+        let mut len_buf = [0u8; 4];
+        stream.read_exact(&mut len_buf)?;
+        let resp_len = u32::from_le_bytes(len_buf) as usize;
+
+        let mut buf = vec![0u8; resp_len];
+        stream.read_exact(&mut buf)?;
+
+        match serde_json::from_slice::<StreamResponse<Response>>(&buf)? {
+            StreamResponse::Data(resp) => Ok(resp),
+            StreamResponse::EndOfStream => Err(anyhow::anyhow!("Unexpected end of stream")),
+        }
+    }
+
+    pub fn get_config(&self) -> anyhow::Result<Config> {
+        match self.send_request(Request::GetConfig)? {
+            Response::GetConfig { config } => Ok(config),
+            Response::Error { message } => Err(anyhow::anyhow!("Error: {}", message)),
+            _ => Err(anyhow::anyhow!("Unexpected response type")),
+        }
+    }
+
+    pub fn update_config(&self, config: Config) -> anyhow::Result<()> {
+        match self.send_request(Request::UpdateConfig { config })? {
+            Response::UpdateConfig => Ok(()),
+            Response::Error { message } => Err(anyhow::anyhow!("Error: {}", message)),
+            _ => Err(anyhow::anyhow!("Unexpected response type")),
+        }
+    }
+
+    pub fn commit_config(&self) -> anyhow::Result<()> {
+        match self.send_request(Request::CommitConfig)? {
+            Response::CommitConfig => Ok(()),
+            Response::Error { message } => Err(anyhow::anyhow!("Error: {}", message)),
+            _ => Err(anyhow::anyhow!("Unexpected response type")),
+        }
+    }
+
+    pub fn search(&self, query: &str, media_type: &str) -> anyhow::Result<Vec<SearchHit>> {
+        match self.send_request(Request::Search { query: query.to_string(), media_type: media_type.to_string() })? {
+            Response::Search { results } => Ok(results),
+            Response::Error { message } => Err(anyhow::anyhow!("Error: {}", message)),
+            _ => Err(anyhow::anyhow!("Unexpected response type")),
+        }
+    }
+
+    pub fn list_downloads(&self) -> anyhow::Result<Vec<DownloadInfo>> {
+        match self.send_request(Request::ListDownloads)? {
+            Response::ListDownloads { downloads } => Ok(downloads),
+            Response::Error { message } => Err(anyhow::anyhow!("Error: {}", message)),
+            _ => Err(anyhow::anyhow!("Unexpected response type")),
+        }
+    }
+
+    pub fn get_download(&self, id: u64) -> anyhow::Result<Option<DownloadInfo>> {
+        match self.send_request(Request::GetDownload { id })? {
+            Response::GetDownload { download } => Ok(download),
+            Response::Error { message } => Err(anyhow::anyhow!("Error: {}", message)),
+            _ => Err(anyhow::anyhow!("Unexpected response type")),
+        }
+    }
+
+    pub fn start_download(
+        &self,
+        backend: &str,
+        title: &str,
+        filename: &str,
+        url: &str,
+        size: u64,
+        year: Option<u32>,
+        media_type: &str,
+    ) -> anyhow::Result<u64> {
+        match self.send_request(Request::StartDownload {
+            backend: backend.to_string(),
+            title: title.to_string(),
+            filename: filename.to_string(),
+            url: url.to_string(),
+            size,
+            year,
+            media_type: media_type.to_string(),
+        })? {
+            Response::StartDownload { id } => Ok(id),
+            Response::Error { message } => Err(anyhow::anyhow!("Error: {}", message)),
+            _ => Err(anyhow::anyhow!("Unexpected response type")),
+        }
+    }
+}

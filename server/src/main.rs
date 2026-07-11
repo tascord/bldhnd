@@ -12,7 +12,6 @@ use {
 };
 
 fn setup_logging() -> anyhow::Result<()> {
-    // rotate previous LATEST -> timestamped file
     let logs_dir = logs();
     if !logs_dir.exists() {
         fs::create_dir_all(&logs_dir)?;
@@ -21,17 +20,13 @@ fn setup_logging() -> anyhow::Result<()> {
     let latest = logs_dir.join("LATEST");
     if latest.exists() {
         let meta = fs::metadata(&latest)?;
-        // prefer creation time, fall back to modification time
         let sys_time = meta.created().or_else(|_| meta.modified()).unwrap_or(std::time::SystemTime::now());
-
         let dt: chrono::DateTime<chrono::Local> = sys_time.into();
         let name = format!("{}.log", dt.format("%Y%m%dT%H%M%S%z"));
         let target = logs_dir.join(name);
-        // ignore error if rename fails for some reason
         let _ = fs::rename(&latest, &target);
     }
 
-    // create new LATEST log file
     let file = File::create(&latest)?;
 
     let stdout_layer = fmt::layer()

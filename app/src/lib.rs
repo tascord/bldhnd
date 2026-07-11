@@ -1,54 +1,38 @@
 use {
     futures_signals::signal::Mutable,
     serde::{Deserialize, Serialize},
-    std::{
-        env,
-        fs::{File, OpenOptions},
-        io::{Read, Write},
-        path::Path,
-        sync::{Arc, LazyLock},
-    },
-    tracing::info,
+    std::sync::{Arc, LazyLock},
 };
 
 pub mod data;
 pub mod fs;
+pub mod ipsea;
 pub mod logs;
 pub mod ui;
 
-static CONFIG: LazyLock<Arc<Mutable<Config>>> = LazyLock::new(|| Arc::new(Mutable::new(Config::new())));
+static CONFIG: LazyLock<Arc<Mutable<Config>>> = LazyLock::new(|| Arc::new(Mutable::new(Config::load())));
 pub fn config() -> Arc<Mutable<Config>> { CONFIG.clone() }
 
-pub fn file() -> File {
-    let p = Path::new(&env::home_dir().expect("No home dir")).join(".config/").join("bldhnd.json");
-    OpenOptions::new().create(true).write(true).truncate(true).read(true).open(p).expect("Failed to open config")
-}
-
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct Config {
     pub volumes: Vec<Volume>,
+    pub soulseek_username: Option<String>,
+    pub soulseek_password: Option<String>,
+    pub bh_server_url: Option<String>,
+    pub download_dir: Option<String>,
 }
 
 impl Config {
-    pub fn new() -> Self {
-        let mut s = String::new();
-        file().read_to_string(&mut s).unwrap();
-
-        if s.is_empty() { Config::default() } else { serde_json::from_str(&s).unwrap() }
-    }
+    pub fn load() -> Self { ipsea::Client::connect().get_config().unwrap_or_default() }
 
     pub fn commit(&self) {
-        let js = serde_json::to_string_pretty(self).unwrap();
-        let mut f = file();
-
-        f.write_all(js.as_bytes()).unwrap();
-        f.flush().unwrap();
-
-        info!("Changes saved!")
+        if let Err(e) = ipsea::Client::connect().update_config(self.clone()) {
+            tracing::warn!("Failed to save config: {}", e);
+        }
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Volume {
     pub name: String,
     pub path: String,

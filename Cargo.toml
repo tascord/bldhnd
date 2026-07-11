@@ -2,5 +2,7 @@
 resolver = "2"
 members = [
     "libs/*",
-    "app/"
-, "server"]
+    "app/",
+    "server",
+    "service"
+]
