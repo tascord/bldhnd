@@ -78,7 +78,7 @@ impl UserManager {
             let user =
                 User { id, username: username.to_string(), password_hash, created_at: chrono::Utc::now().timestamp() };
             let json = serde_json::to_string(&user)?;
-            table.insert(username.as_bytes(), json.as_str())?;
+            table.insert(username, json.as_str())?;
         }
         tx.commit()?;
         Ok(id)
@@ -88,7 +88,7 @@ impl UserManager {
         let db = &*USERS_DB;
         let tx = db.begin_read()?;
         let table = tx.open_table(USERS_TABLE)?;
-        if let Ok(Some(value)) = table.get(username.as_bytes()) {
+        if let Ok(Some(value)) = table.get(username) {
             let user: User = serde_json::from_str(value.value())?;
             Ok(Some(user))
         } else {
@@ -118,7 +118,7 @@ impl UserManager {
         {
             let mut table = tx.open_table(SESSIONS_TABLE)?;
             let json = serde_json::to_string(&session)?;
-            table.insert(token.as_bytes(), json.as_str())?;
+            table.insert(token, json.as_str())?;
         }
         tx.commit()?;
         Ok(token)
@@ -128,7 +128,7 @@ impl UserManager {
         let db = &*USERS_DB;
         let tx = db.begin_read()?;
         let table = tx.open_table(SESSIONS_TABLE)?;
-        if let Ok(Some(value)) = table.get(token.as_bytes()) {
+        if let Ok(Some(value)) = table.get(token) {
             let session: Session = serde_json::from_str(value.value())?;
             if session.expires_at > chrono::Utc::now().timestamp() {
                 return Ok(Some(session));
@@ -142,7 +142,7 @@ impl UserManager {
         let mut tx = db.begin_write()?;
         {
             let mut table = tx.open_table(SESSIONS_TABLE)?;
-            table.remove(token.as_bytes())?;
+            table.remove(token)?;
         }
         tx.commit()?;
         Ok(())
