@@ -72,7 +72,7 @@ impl UserManager {
         let password_hash = hash_password(password);
 
         let db = &*USERS_DB;
-        let mut tx = db.begin_write()?;
+        let tx = db.begin_write()?;
         {
             let mut table = tx.open_table(USERS_TABLE)?;
             let user =
@@ -114,11 +114,11 @@ impl UserManager {
             expires_at: chrono::Utc::now().timestamp() + 86400 * 7,
         };
         let db = &*USERS_DB;
-        let mut tx = db.begin_write()?;
+        let tx = db.begin_write()?;
         {
             let mut table = tx.open_table(SESSIONS_TABLE)?;
             let json = serde_json::to_string(&session)?;
-            table.insert(token, json.as_str())?;
+            table.insert(&token, json.as_str())?;
         }
         tx.commit()?;
         Ok(token)
@@ -128,7 +128,7 @@ impl UserManager {
         let db = &*USERS_DB;
         let tx = db.begin_read()?;
         let table = tx.open_table(SESSIONS_TABLE)?;
-        if let Ok(Some(value)) = table.get(token) {
+        if let Ok(Some(value)) = table.get(&token) {
             let session: Session = serde_json::from_str(value.value())?;
             if session.expires_at > chrono::Utc::now().timestamp() {
                 return Ok(Some(session));
@@ -139,10 +139,10 @@ impl UserManager {
 
     pub fn delete_session(&self, token: &str) -> anyhow::Result<()> {
         let db = &*USERS_DB;
-        let mut tx = db.begin_write()?;
+        let tx = db.begin_write()?;
         {
             let mut table = tx.open_table(SESSIONS_TABLE)?;
-            table.remove(token)?;
+            table.remove(&token)?;
         }
         tx.commit()?;
         Ok(())
