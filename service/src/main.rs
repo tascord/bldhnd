@@ -10,6 +10,7 @@ mod ipsea;
 mod notification;
 mod plex;
 mod search;
+mod users;
 
 fn setup_logging() -> anyhow::Result<()> {
     let logs_dir = logs_dir();
