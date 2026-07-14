@@ -51,6 +51,14 @@ pub fn download_dir() -> PathBuf {
 const DOWNLOADS_TABLE: TableDefinition<u64, &str> = TableDefinition::new("downloads");
 const PARTIAL_TABLE: TableDefinition<u64, &str> = TableDefinition::new("partial");
 
+pub fn init() {
+    let db = &*DOWNLOAD_DB;
+    let mut tx = db.begin_write().expect("Failed to begin write");
+    tx.open_table(DOWNLOADS_TABLE).expect("Failed to create downloads table");
+    tx.open_table(PARTIAL_TABLE).expect("Failed to create partial table");
+    tx.commit().expect("Failed to commit");
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PartialDownload {
     pub bytes_done: u64,

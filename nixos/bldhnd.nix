@@ -21,7 +21,10 @@ let
   useCombo =
     config.services.bldhnd.mode == "combo"
     || (config.services.bldhnd.package == null && comboPkg != null);
-  effectivePkg = if useCombo then comboPkg else execPath;
+  effectivePkg =
+    if config.services.bldhnd.package != null then config.services.bldhnd.package
+    else if useCombo then comboPkg
+    else serverPkg;
 in
 {
   options = {
@@ -62,7 +65,7 @@ in
       serviceConfig = {
         ExecStart =
           if useCombo then
-            "${pkgs.bash}/bin/bash -c 'cd /var/lib/bldhnd && ${comboPkg}/bin/bh-service & ${comboPkg}/bin/bldhnd'"
+            "${pkgs.bash}/bin/bash -c 'cd /var/lib/bldhnd && ${effectivePkg}/bin/bh-service & ${effectivePkg}/bin/bldhnd'"
           else
             "${execPath}/bin/bh-server";
         Restart = "on-failure";

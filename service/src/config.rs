@@ -30,6 +30,13 @@ pub fn config_dir() -> PathBuf {
 
 const CONFIG_TABLE: TableDefinition<&str, &str> = TableDefinition::new("config");
 
+pub fn init() {
+    let db = &*CONFIG_DB;
+    let mut tx = db.begin_write().expect("Failed to begin write");
+    tx.open_table(CONFIG_TABLE).expect("Failed to create config table");
+    tx.commit().expect("Failed to commit");
+}
+
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct Config {
     pub volumes: Vec<Volume>,

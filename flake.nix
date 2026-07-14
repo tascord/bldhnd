@@ -24,6 +24,7 @@
         pname = "bldhnd-workspace";
         version = "0.1.0";
         inherit src;
+        buildInputs = [ pkgs.pkg-config pkgs.openssl ];
       };
       # Build deps-only first (external crates only) with vendoring disabled
       # because we have local path deps that aren't in vendor

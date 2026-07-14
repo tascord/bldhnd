@@ -30,6 +30,14 @@ pub fn users_dir() -> PathBuf {
 const USERS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("users");
 const SESSIONS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("sessions");
 
+pub fn init() {
+    let db = &*USERS_DB;
+    let mut tx = db.begin_write().expect("Failed to begin write");
+    tx.open_table(USERS_TABLE).expect("Failed to create users table");
+    tx.open_table(SESSIONS_TABLE).expect("Failed to create sessions table");
+    tx.commit().expect("Failed to commit");
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub id: u64,

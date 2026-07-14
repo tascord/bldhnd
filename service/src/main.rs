@@ -70,6 +70,10 @@ fn main() -> anyhow::Result<()> {
 
     info!("Started bldhnd service");
 
+    config::init();
+    users::init();
+    download::init();
+
     let socket_path = if let Ok(r) = env::var("XDG_RUNTIME_DIR") {
         PathBuf::from(r).join("bldhnd.sock")
     } else if let Ok(r) = env::var("BLDHND_DIR") {
