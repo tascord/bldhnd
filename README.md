@@ -66,7 +66,14 @@ See the GitHub Releases page for pre-built binaries.
 
 ## Nix (non-NixOS)
 
-On non-NixOS systems with Nix installed, enable flakes:
+On non-NixOS systems with Nix installed, enable flakes and install to your user profile:
+
+```bash
+nix profile install github:tascord/bldhnd#packages.x86_64-linux.cli
+bldhnd
+```
+
+Or build locally:
 
 ```bash
 nix build .#packages.x86_64-linux.cli
