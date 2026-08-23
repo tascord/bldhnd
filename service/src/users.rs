@@ -118,7 +118,7 @@ impl UserManager {
         {
             let mut table = tx.open_table(SESSIONS_TABLE)?;
             let json = serde_json::to_string(&session)?;
-            table.insert(&token, json.as_str())?;
+            table.insert(token.as_str(), json.as_str())?;
         }
         tx.commit()?;
         Ok(token)

@@ -86,5 +86,5 @@ async fn main() -> anyhow::Result<()> {
         env::var("PORT").map(|v| v.parse().expect("Invalid PORT env")).unwrap_or(40000),
     );
 
-    serve(sock, Router::route).await
+    serve(sock, Router::new()).await
 }

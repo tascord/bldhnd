@@ -26,19 +26,9 @@
         inherit src;
         buildInputs = [ pkgs.pkg-config pkgs.openssl ];
       };
-      # Build deps-only first (external crates only) with vendoring disabled
-      # because we have local path deps that aren't in vendor
-      cargoArtifacts = craneLib.buildDepsOnly (
-        commonArgs
-        // {
-          vendorSrc = null;
-        }
-      );
-
       fz = craneLib.buildPackage (
         commonArgs
         // {
-          inherit cargoArtifacts;
           pname = "fz";
           cargoExtraArgs = "-p fz";
           doCheck = false;
@@ -48,57 +38,47 @@
       cli = craneLib.buildPackage (
         commonArgs
         // {
-          inherit cargoArtifacts;
           pname = "bldhnd";
           cargoExtraArgs = "-p bldhnd";
           doCheck = false;
         }
       );
 
-      server = craneLib.buildPackage (
+      bh-server = craneLib.buildPackage (
         commonArgs
         // {
-          inherit cargoArtifacts;
           pname = "bh-server";
           cargoExtraArgs = "-p bh-server";
           doCheck = false;
         }
       );
 
-      service-tui = pkgs.symlinkJoin {
-        name = "bldhnd-service-tui";
-        paths = [
-          (craneLib.buildPackage (
-            commonArgs
-            // {
-              inherit cargoArtifacts;
-              pname = "bh-service";
-              cargoExtraArgs = "-p bh-service";
-              doCheck = false;
-            }
-          ))
-          (craneLib.buildPackage (
-            commonArgs
-            // {
-              inherit cargoArtifacts;
-              pname = "bldhnd-tui";
-              cargoExtraArgs = "-p bldhnd";
-              doCheck = false;
-            }
-          ))
-        ];
-        meta = {
-          description = "bldhnd combined service and TUI";
-        };
-      };
+      bh-service = craneLib.buildPackage (
+        commonArgs
+        // {
+          pname = "bh-service";
+          cargoExtraArgs = "-p bh-service";
+          doCheck = false;
+        }
+      );
+
+      bldhnd = craneLib.buildPackage (
+        commonArgs
+        // {
+          pname = "bldhnd-tui";
+          cargoExtraArgs = "-p bldhnd";
+          doCheck = false;
+        }
+      );
     in
     {
       packages.${system} = {
         inherit
           fz
           cli
-          server
-          service-tui
+          bh-server
+          bh-service
+          bldhnd
           ;
         default = cli;
       };
@@ -107,8 +87,9 @@
         inherit
           fz
           cli
-          server
-          service-tui
+          bh-server
+          bh-service
+          bldhnd
           ;
       };
 
