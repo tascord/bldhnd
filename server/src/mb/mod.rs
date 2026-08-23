@@ -225,7 +225,7 @@ impl MusicBrainz {
                             }
                             Err(e) => {
                                 failures += 1;
-                                warn!(error = %e, line = %line, "Failed to parse release item");
+                                warn!(error = %e, "Failed to parse release item");
                             }
                         }
                     }

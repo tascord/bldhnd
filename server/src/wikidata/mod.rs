@@ -98,9 +98,10 @@ impl WikiData {
         txn.open_table(Self::checkpoint_table_def()).unwrap();
         txn.commit().unwrap();
 
-        let (_, total) = load_wikidata_offset(&db);
+        let (_, total_films) = load_wikidata_offset(&db, "Q11424");
+        let (_, total_tv) = load_wikidata_offset(&db, "Q5398426");
 
-        Self { db, total: AtomicUsize::new(total) }
+        Self { db, total: AtomicUsize::new(total_films + total_tv) }
     }
 
     /// Primary-key table: QID → JSON-serialised `WikiDataItem`.
@@ -126,7 +127,7 @@ impl WikiData {
             .timeout(std::time::Duration::from_secs(180))
             .build()?;
 
-        let (mut offset, _) = load_wikidata_offset(&self.db);
+        let (mut offset, _) = load_wikidata_offset(&self.db, type_qid);
 
         let mut total_processed = 0usize;
         let mut total_skipped = 0usize;
@@ -137,7 +138,7 @@ impl WikiData {
         loop {
             let query = build_sparql_query(type_qid, BATCH_SIZE, offset);
 
-            save_wikidata_offset(&self.db, offset, self.total.load(Ordering::Relaxed));
+            save_wikidata_offset(&self.db, type_qid, offset, self.total.load(Ordering::Relaxed));
             info!(%offset, "Querying WikiData SPARQL endpoint");
 
             let resp = loop {
@@ -225,7 +226,7 @@ impl WikiData {
             tx.commit()?;
 
             self.total.fetch_add(batch_len, Ordering::Relaxed);
-            save_wikidata_offset(&self.db, offset, self.total.load(Ordering::Relaxed));
+            save_wikidata_offset(&self.db, type_qid, offset, self.total.load(Ordering::Relaxed));
 
             info!(total_processed, total_skipped, %offset, "Committed WikiData batch");
 
@@ -247,11 +248,11 @@ impl WikiData {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-fn load_wikidata_offset(db: &Database) -> (usize, usize) {
+fn load_wikidata_offset(db: &Database, type_qid: &str) -> (usize, usize) {
     let tx = db.begin_read().unwrap();
     let table = tx.open_table(WikiData::checkpoint_table_def()).unwrap();
     table
-        .get("cursor".to_string())
+        .get(format!("cursor_{}", type_qid))
         .ok()
         .flatten()
         .and_then(|v| {
@@ -264,11 +265,11 @@ fn load_wikidata_offset(db: &Database) -> (usize, usize) {
         .unwrap_or((0, 0))
 }
 
-fn save_wikidata_offset(db: &Database, offset: usize, total: usize) {
+fn save_wikidata_offset(db: &Database, type_qid: &str, offset: usize, total: usize) {
     let tx = db.begin_write().unwrap();
     let mut table = tx.open_table(WikiData::checkpoint_table_def()).unwrap();
     let payload = serde_json::json!({ "offset": offset, "total": total }).to_string();
-    table.insert("cursor".to_string(), payload).unwrap();
+    table.insert(format!("cursor_{}", type_qid), payload).unwrap();
     drop(table);
     tx.commit().unwrap();
 }
