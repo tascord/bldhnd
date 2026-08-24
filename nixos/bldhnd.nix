@@ -6,67 +6,67 @@
   ...
 }:
 
-let
-  flakePackages = if self != null && self ? packages then self.packages else { };
-  hasFlakeServer =
-    builtins.hasAttr pkgs.system flakePackages
-    && builtins.hasAttr "server" flakePackages.${pkgs.system};
-  hasFlakeCombo =
-    builtins.hasAttr pkgs.system flakePackages
-    && builtins.hasAttr "service-tui" flakePackages.${pkgs.system};
-  serverPkg = if hasFlakeServer then flakePackages.${pkgs.system}.server else null;
-  comboPkg = if hasFlakeCombo then flakePackages.${pkgs.system}.service-tui else null;
-  execPath =
-    if config.services.bldhnd.package != null then config.services.bldhnd.package else serverPkg;
-  useCombo =
-    config.services.bldhnd.mode == "combo"
-    || (config.services.bldhnd.package == null && comboPkg != null);
-  effectivePkg = if useCombo then comboPkg else execPath;
-in
 {
   options = {
-    services.bldhnd = {
-      enable = lib.mkEnableOption "bldhnd server";
+    services.bldhnd-server = {
+      enable = lib.mkEnableOption "bh-server";
       package = lib.mkOption {
         type = lib.types.nullOr lib.types.package;
         default = null;
-        description = "Package to run for the server. If null the flake-built server package is used.";
+        description = "Package to run for bh-server.";
       };
-      mode = lib.mkOption {
-        type = lib.types.enum [
-          "server"
-          "combo"
-        ];
-        default = "server";
-        description = "Whether to run just the server or the service+TUI combo.";
+    };
+    services.bldhnd-service = {
+      enable = lib.mkEnableOption "bh-service";
+      package = lib.mkOption {
+        type = lib.types.nullOr lib.types.package;
+        default = null;
+        description = "Package to run for bh-service.";
       };
-      user = lib.mkOption {
-        type = lib.types.str;
-        default = "root";
-        description = "User to run the service as.";
+    };
+    programs.bldhnd = {
+      enable = lib.mkEnableOption "bldhnd TUI";
+      package = lib.mkOption {
+        type = lib.types.nullOr lib.types.package;
+        default = null;
+        description = "Package to run for bldhnd TUI.";
       };
     };
   };
 
-  config = lib.mkIf config.services.bldhnd.enable {
+  config = lib.mkIf (config.services.bldhnd-server.enable || config.services.bldhnd-service.enable || config.programs.bldhnd.enable) {
     assertions = [
       {
-        assertion = effectivePkg != null;
-        message = "services.bldhnd.package must be set when the flake-built server package is unavailable for ${pkgs.system}.";
+        assertion = config.services.bldhnd-server.package != null;
+        message = "services.bldhnd-server.package must be set";
+      }
+      {
+        assertion = config.services.bldhnd-service.package != null;
+        message = "services.bldhnd-service.package must be set";
+      }
+      {
+        assertion = config.programs.bldhnd.package != null;
+        message = "programs.bldhnd.package must be set";
       }
     ];
 
-    systemd.services.bldhnd-server = {
+    systemd.services.bldhnd-server = lib.mkIf config.services.bldhnd-server.enable {
       description = "bldhnd server";
       wantedBy = [ "multi-user.target" ];
       serviceConfig = {
-        ExecStart =
-          if useCombo then
-            "${pkgs.bash}/bin/bash -c 'cd /var/lib/bldhnd && ${comboPkg}/bin/bh-service & ${comboPkg}/bin/bldhnd'"
-          else
-            "${execPath}/bin/bh-server";
+        ExecStart = "${config.services.bldhnd-server.package}/bin/bh-server";
         Restart = "on-failure";
-        User = config.services.bldhnd.user;
+        StateDirectory = "bldhnd";
+        Environment = "BLDHND_DIR=/var/lib/bldhnd";
+      };
+    };
+
+    systemd.services.bldhnd-service = lib.mkIf config.services.bldhnd-service.enable {
+      description = "bldhnd service";
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig = {
+        ExecStart = "${config.services.bldhnd-service.package}/bin/bh-service";
+        Restart = "on-failure";
         StateDirectory = "bldhnd";
         Environment = "BLDHND_DIR=/var/lib/bldhnd";
       };

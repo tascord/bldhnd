@@ -4,8 +4,9 @@ use {
         download::{Download, DownloadItem, DownloadManager, MediaType, Progress},
         notification::{Notification, NotificationBackend, SystemNotifier},
         plex::PlexClient,
+        search::SearchHit,
     },
-    download::{DownloadBackend, DownloadItem as LibDownloadItem, SearchBackend, SearchHit},
+    download::{DownloadBackend, DownloadItem as LibDownloadItem, SearchBackend},
     serde::{Deserialize, Serialize},
     std::{sync::mpsc::Sender, time::Duration},
     tokio::time::sleep,
@@ -22,7 +23,12 @@ pub enum Request {
     CommitConfig,
     Search {
         query: String,
-        backend: String,
+        /// Knowledge-base search type: "Music" | "Movie" | "Series".
+        #[serde(default)]
+        media_type: Option<String>,
+        /// Download-backend search: "soulseek" | "torrent" | "usenet".
+        #[serde(default)]
+        backend: Option<String>,
     },
     ListDownloads,
     GetDownload {
@@ -61,8 +67,18 @@ pub enum Response {
     Error { message: String },
 }
 
-pub fn handle_request(req: Request, tx: Sender<Response>) {
-    match req {
+/// Run blocking work on a dedicated OS thread — ipsea handlers run without a
+/// tokio reactor, and `reqwest::blocking` / fresh runtimes must not be entered
+/// from inside one anyway.
+fn run_blocking<T, F>(f: F) -> anyhow::Result<T>
+where
+    F: FnOnce() -> anyhow::Result<T> + Send + 'static,
+    T: Send + 'static,
+{
+    std::thread::spawn(f).join().map_err(|_| anyhow::anyhow!("worker thread panicked"))?
+}
+
+pub fn handle_request(req: Request, tx: Sender<Response>) {    match req {
         Request::GetConfig => {
             let config = Config::load();
             let _ = tx.send(Response::GetConfig { config });
@@ -92,9 +108,31 @@ pub fn handle_request(req: Request, tx: Sender<Response>) {
                 let _ = tx.send(Response::CommitConfig);
             }
         }
-        Request::Search { query, backend } => {
-            let rt = tokio::runtime::Handle::current();
-            let results = rt.block_on(async {
+        Request::Search { query, media_type, backend } => {
+            // Knowledge-base search (what the TUI uses).
+            //
+            // ipsea dispatches handlers on plain OS threads — there is no
+            // tokio reactor here, so run blocking work on a dedicated thread.
+            if let Some(media_type) = media_type {
+                let results = run_blocking(move || crate::search::search(&query, &media_type));
+                match results {
+                    Ok(results) => {
+                        let _ = tx.send(Response::Search { results });
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Response::Error { message: e.to_string() });
+                    }
+                }
+                return;
+            }
+
+            // Download-backend search.
+            let Some(backend) = backend else {
+                let _ = tx.send(Response::Error { message: "Search requires either media_type or backend".into() });
+                return;
+            };
+            let backend_name = backend.clone();
+            let results = run_blocking(move || {
                 let config = Config::load();
                 let backend_config = download::BackendConfig {
                     soulseek_username: config.soulseek_username.clone(),
@@ -102,34 +140,50 @@ pub fn handle_request(req: Request, tx: Sender<Response>) {
                     bh_server_url: config.bh_server_url.clone(),
                     subtitle_api_key: None,
                 };
-                match backend.as_str() {
-                    "soulseek" => {
-                        if let Some(searcher) = download::slsk::SlskSearcher::with_config(&backend_config) {
-                            searcher.search(&query).await
-                        } else {
-                            Err(anyhow::anyhow!("Soulseek credentials not configured"))
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?;
+                rt.block_on(async {
+                    match backend_name.as_str() {
+                        "soulseek" => {
+                            if let Some(searcher) = download::slsk::SlskSearcher::with_config(&backend_config) {
+                                searcher.search(&query).await
+                            } else {
+                                Err(anyhow::anyhow!("Soulseek credentials not configured"))
+                            }
                         }
-                    }
-                    "torrent" => {
-                        if let Some(searcher) = download::torrent::TorrentSearcher::with_config(&backend_config) {
-                            searcher.search(&query).await
-                        } else {
-                            Err(anyhow::anyhow!("Indexer URL not configured"))
+                        "torrent" => {
+                            if let Some(searcher) = download::torrent::TorrentSearcher::with_config(&backend_config) {
+                                searcher.search(&query).await
+                            } else {
+                                Err(anyhow::anyhow!("Indexer URL not configured"))
+                            }
                         }
-                    }
-                    "usenet" => {
-                        if let Some(searcher) = download::usenet::UsenetSearcher::with_config(&backend_config) {
-                            searcher.search(&query).await
-                        } else {
-                            Err(anyhow::anyhow!("Indexer URL not configured"))
+                        "usenet" => {
+                            if let Some(searcher) = download::usenet::UsenetSearcher::with_config(&backend_config) {
+                                searcher.search(&query).await
+                            } else {
+                                Err(anyhow::anyhow!("Indexer URL not configured"))
+                            }
                         }
+                        _ => Err(anyhow::anyhow!("Unknown backend: {}", backend_name)),
                     }
-                    _ => Err(anyhow::anyhow!("Unknown backend: {}", backend)),
-                }
+                })
             });
             match results {
                 Ok(results) => {
-                    let _ = tx.send(Response::Search { results });
+                    let hits = results
+                        .into_iter()
+                        .map(|r| SearchHit {
+                            backend: backend.clone(),
+                            title: r.title,
+                            artist: r.username,
+                            year: None,
+                            size: r.size,
+                            ext: r.ext,
+                        })
+                        .collect();
+                    let _ = tx.send(Response::Search { results: hits });
                 }
                 Err(e) => {
                     let _ = tx.send(Response::Error { message: e.to_string() });

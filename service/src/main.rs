@@ -10,6 +10,7 @@ mod ipsea;
 mod notification;
 mod plex;
 mod search;
+mod users;
 
 fn setup_logging() -> anyhow::Result<()> {
     let logs_dir = logs_dir();
@@ -69,6 +70,10 @@ fn main() -> anyhow::Result<()> {
     setup_logging()?;
 
     info!("Started bldhnd service");
+
+    config::init();
+    users::init();
+    download::init();
 
     // The ipsea IPC layer binds sockets at /tmp/{name}.sock, so both this
     // service and the TUI (app/src/ipsea.rs) must agree on that exact path.
