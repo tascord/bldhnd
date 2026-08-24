@@ -57,6 +57,7 @@ pub fn search(query: &str, media_type: &str) -> anyhow::Result<Vec<SearchHit>> {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct MusicResult {
     title: String,
     primary_artist: String,
@@ -65,6 +66,7 @@ struct MusicResult {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct MediaResult {
     title: String,
     release_date: Option<String>,

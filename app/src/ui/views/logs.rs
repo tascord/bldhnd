@@ -1,51 +1,42 @@
 use {
-    super::home::BANNER_FONT,
     crate::logs::log_store,
-    bobatea::{
-        components::{list::List, style::BobaStyle},
-        theme::Theme,
-    },
+    bobatea::{components::style::BobaStyle, theme::Theme},
     ratatui::prelude::*,
 };
 
-pub struct LogsPanel {
-    banner: Vec<String>,
-}
+pub struct LogsPanel;
 
 impl LogsPanel {
-    pub fn new() -> Self {
-        let flet = figlet_rs::FIGlet::from_content(BANNER_FONT).unwrap();
-        let text = flet.convert("logs").unwrap().to_string();
-
-        Self { banner: text.lines().map(|l| l.to_string()).collect() }
-    }
+    pub fn new() -> Self { Self }
 
     pub fn render(&self, area: Rect, buf: &mut Buffer, theme: &Theme) {
         if area.width == 0 || area.height == 0 {
             return;
         }
 
-        let banner_text = self.banner.join("\n");
-        let banner_style = BobaStyle::new().fg(theme.palette.accent.to_rgb()).bold();
+        let accent = BobaStyle::new().fg(theme.palette.accent.to_rgb()).bold();
+        let fg = BobaStyle::new().fg(theme.global_fg);
+        let muted = BobaStyle::new().fg(theme.palette.fg_muted.to_rgb());
 
-        let surf = banner_style.render(&banner_text);
-        surf.blit(buf, area.x + 2, area.y);
+        accent.render("Logs").blit(buf, area.x, area.y);
 
-        let surf_h = surf.height() as u16;
-        let content_area = Rect {
-            x: area.x + 2,
-            y: area.y + surf_h + 1,
-            width: area.width.saturating_sub(4),
-            height: area.height.saturating_sub(surf_h + 2),
-        };
+        if area.height < 3 {
+            return;
+        }
 
-        let log_entries = log_store().entries();
-        if log_entries.is_empty() {
-            let list = List::new(["No logs yet".to_string()]).without_border();
-            list.render_to_buf(content_area, buf, theme);
-        } else {
-            let list = List::new(log_entries).without_border();
-            list.render_to_buf(content_area, buf, theme);
+        let entries = log_store().entries();
+
+        if entries.is_empty() {
+            muted.render("No logs yet.").blit(buf, area.x, area.y + 1);
+            return;
+        }
+
+        // Show the most recent entries at the bottom.
+        let rows = (area.height - 1) as usize;
+        let start = entries.len().saturating_sub(rows);
+        for (i, entry) in entries[start..].iter().enumerate() {
+            let y = area.y + 1 + i as u16;
+            fg.render(entry).blit(buf, area.x, y);
         }
     }
 }

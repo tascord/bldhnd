@@ -7,7 +7,7 @@ use {
         net::SocketAddr,
     },
     tokio::spawn,
-    tracing::{info, warn},
+    tracing::{error, info, warn},
     tracing_subscriber::{Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt},
 };
 
@@ -74,11 +74,11 @@ async fn main() -> anyhow::Result<()> {
     let wd = wikidata::client();
 
     spawn(async move {
-        let _ = mb.fetch().await.inspect_err(|e| warn!("{e:?}"));
+        let _ = mb.fetch().await.inspect_err(|e| error!("MusicBrainz ingest failed: {e:#}"));
     });
 
     spawn(async move {
-        let _ = wd.fetch().await.inspect_err(|e| warn!("{e:?}"));
+        let _ = wd.fetch().await.inspect_err(|e| error!("WikiData ingest failed: {e:#}"));
     });
 
     let sock = SocketAddr::new(

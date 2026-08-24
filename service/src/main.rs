@@ -70,24 +70,15 @@ fn main() -> anyhow::Result<()> {
 
     info!("Started bldhnd service");
 
-    let socket_path = if let Ok(r) = env::var("XDG_RUNTIME_DIR") {
-        PathBuf::from(r).join("bldhnd.sock")
-    } else if let Ok(r) = env::var("BLDHND_DIR") {
-        PathBuf::from(r).join("bldhnd.sock")
-    } else {
-        PathBuf::from("/run").join("bldhnd").join("bldhnd.sock")
-    };
+    // The ipsea IPC layer binds sockets at /tmp/{name}.sock, so both this
+    // service and the TUI (app/src/ipsea.rs) must agree on that exact path.
+    let socket_path = std::path::PathBuf::from("/tmp/bldhnd.sock");
+    let socket_name = "bldhnd".to_string();
 
-    if let Some(parent) = socket_path.parent() {
-        if !parent.exists() {
-            std::fs::create_dir_all(parent)?;
-        }
-    }
     if socket_path.exists() {
         std::fs::remove_file(&socket_path)?;
     }
 
-    let socket_name = socket_path.to_string_lossy().to_string();
     if let Err(e) = ipsea::serve(&socket_name) {
         warn!("bh-service error: {}", e);
     }

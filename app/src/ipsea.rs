@@ -103,18 +103,18 @@ impl Client {
     }
 
     pub fn connect() -> Self {
-        let socket_path = if let Ok(r) = std::env::var("XDG_RUNTIME_DIR") {
-            std::path::PathBuf::from(r).join("bldhnd.sock")
-        } else if let Ok(r) = std::env::var("BLDHND_DIR") {
-            std::path::PathBuf::from(r).join("bldhnd.sock")
-        } else {
-            std::path::PathBuf::from("/run/bldhnd/bldhnd.sock")
-        };
-        Client { socket_path }
+        // Must match the service: the ipsea IPC layer binds at /tmp/{name}.sock.
+        Client { socket_path: std::path::PathBuf::from("/tmp/bldhnd.sock") }
     }
 
     fn send_request(&self, req: Request) -> anyhow::Result<Response> {
-        let mut stream = std::os::unix::net::UnixStream::connect(&self.socket_path)?;
+        let stream = std::os::unix::net::UnixStream::connect(&self.socket_path).map_err(|e| {
+            anyhow::anyhow!(
+                "Cannot reach bldhnd service at {}: {e}. Is the service running?",
+                self.socket_path.display()
+            )
+        })?;
+        let mut stream = stream;
 
         let data = serde_json::to_vec(&req)?;
         let len_bytes = (data.len() as u32).to_le_bytes();

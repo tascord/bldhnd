@@ -14,4 +14,6 @@
     channel = "nightly";
   };
 
+  processes.bh-service.exec = "cargo run -p bh-service";
+
 }

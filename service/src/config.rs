@@ -6,11 +6,16 @@ use {
 
 pub static CONFIG_DB: std::sync::LazyLock<Arc<Database>> = std::sync::LazyLock::new(|| {
     let dir = config_dir();
-    if !dir.exists() {
-        std::fs::create_dir_all(&dir).expect("Failed to create config dir");
-    }
     let db_path = dir.join("config.db");
-    Arc::new(Database::create(&db_path).expect("Failed to open config db"))
+    let db = Arc::new(Database::create(&db_path).expect("Failed to open config db"));
+
+    // Ensure the table exists before anything reads from it — a fresh
+    // Database::create contains no tables and open_table would panic.
+    let tx = db.begin_write().expect("Failed to begin write");
+    tx.open_table(CONFIG_TABLE).expect("Failed to create config table");
+    tx.commit().expect("Failed to commit config table creation");
+
+    db
 });
 
 pub fn config_dir() -> PathBuf {
