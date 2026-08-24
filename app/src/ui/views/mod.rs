@@ -296,6 +296,25 @@ impl View for BldhndView {
         // Search submit -> query the service in the background.
         self.search.wire_submit(app.clone());
 
+        // Probe service connectivity for the Home tab.
+        let status = self.home.service_status.clone();
+        let app_probe = app.clone();
+        tokio::spawn(async move {
+            let res = tokio::task::spawn_blocking(|| {
+                crate::ipsea::Client::connect().get_config().map(|cfg| (cfg.volumes.len(), cfg.download_dir))
+            })
+            .await;
+            let line = match res {
+                Ok(Ok((vols, dir))) => {
+                    format!("connected · {vols} volumes · download dir {}", dir.unwrap_or_else(|| "(unset)".into()))
+                }
+                Ok(Err(e)) => format!("service error — {e}"),
+                Err(e) => format!("service unreachable — {e}"),
+            };
+            status.set(line);
+            app_probe.emit(AppEvent::RequestAnimationFrame);
+        });
+
         let active_tab2 = self.active_tab.clone();
         let app_clone = app.clone();
         let search = self.search.clone();

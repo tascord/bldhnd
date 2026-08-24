@@ -52,7 +52,6 @@ pub enum SearchStatus {
 pub struct SearchPanel {
     input: Input,
     list: List,
-    search_type: Mutable<usize>,
     pub results: Mutable<Vec<crate::ipsea::SearchHit>>,
     pub status: Mutable<SearchStatus>,
     input_area: Mutable<Rect>,
@@ -64,7 +63,6 @@ impl SearchPanel {
         Self {
             input: Input::new("Search").placeholder("query…"),
             list: List::new(SearchType::list()),
-            search_type: Mutable::new(0),
             results: Mutable::new(Vec::new()),
             status: Mutable::new(SearchStatus::Idle),
             input_area: Mutable::new(Rect::default()),
@@ -174,11 +172,12 @@ impl SearchPanel {
         let accent = BobaStyle::new().fg(theme.palette.accent.to_rgb()).bold();
         let muted = BobaStyle::new().fg(theme.palette.fg_muted.to_rgb());
 
-        // Section headers
-        accent.render("Query").blit(buf, area.x, area.y);
-
         // Left column: query controls
         let left_w = 42.min(area.width.saturating_sub(2));
+
+        // Section headers with rule lines
+        accent.render("Query").blit(buf, area.x, area.y);
+        muted.render(&rule(6, left_w as usize)).blit(buf, area.x + 6, area.y);
         let input_area = Rect { x: area.x, y: area.y + 1, width: left_w, height: 3 };
         let type_header = Rect { x: area.x, y: area.y + 4, width: left_w, height: 1 };
         let radio_area = Rect { x: area.x, y: area.y + 5, width: left_w, height: 5 };
@@ -222,6 +221,7 @@ impl SearchPanel {
         let warn = BobaStyle::new().fg(theme.palette.warning.to_rgb());
 
         accent.render("Results").blit(buf, area.x, area.y);
+        muted.render(&rule(8, area.width as usize)).blit(buf, area.x + 8, area.y);
 
         if area.height < 3 || area.width < 20 {
             return;
@@ -294,6 +294,9 @@ fn pad(s: &str, w: usize) -> String {
     let len = s.chars().count();
     if len >= w { s.chars().take(w).collect() } else { format!("{s}{}", " ".repeat(w - len)) }
 }
+
+/// Dim horizontal rule starting after a header label.
+fn rule(from: usize, to: usize) -> String { "─".repeat(to.saturating_sub(from + 1)) }
 
 fn trunc_pad(s: &str, w: usize) -> String {
     let len = s.chars().count();

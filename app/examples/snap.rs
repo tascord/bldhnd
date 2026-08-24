@@ -73,4 +73,13 @@ async fn main() {
     ev.emit(key(crossterm::event::KeyCode::Enter)); // save
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     dump(&view, "SETTINGS SAVED", 3);
+
+    // Search tab with query + rules
+    ev.emit(key(crossterm::event::KeyCode::Char('2')));
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    ev.emit(key(crossterm::event::KeyCode::Enter));
+    for ch in ['m', 'e', 't', 'a', 'l'] {
+        ev.emit(key(crossterm::event::KeyCode::Char(ch)));
+    }
+    dump(&view, "SEARCH TAB", 0);
 }

@@ -1,7 +1,8 @@
 use {
     bobatea::{components::style::BobaStyle, theme::Theme},
+    futures_signals::signal::Mutable,
     rand::RngExt,
-    ratatui::{prelude::*, text::Span},
+    ratatui::prelude::*,
 };
 
 pub const BANNER_FONT: &str = include_str!("../../../../_assets/Pagga.tlf");
@@ -10,6 +11,8 @@ pub const SPLASHES: &str = include_str!("../../../../_assets/splash.txt");
 pub struct HomePanel {
     banner: Vec<String>,
     splash: String,
+    /// One-line service status, updated asynchronously from `mount`.
+    pub service_status: Mutable<String>,
 }
 
 impl HomePanel {
@@ -20,7 +23,7 @@ impl HomePanel {
         let shs = SPLASHES.lines().collect::<Vec<_>>();
         let splash = shs[rand::rng().random_range(0..shs.len())].to_string();
 
-        Self { banner: text.lines().map(|l| l.to_string()).collect(), splash }
+        Self { banner: text.lines().map(|l| l.to_string()).collect(), splash, service_status: Mutable::new("checking service…".to_string()) }
     }
 
     pub fn render(&self, area: Rect, buf: &mut Buffer, theme: &Theme) {
@@ -36,11 +39,12 @@ impl HomePanel {
         let surf_h = surf.height() as u16;
 
         let content_width = self.splash.len().max(surf_w as usize) as u16;
+        let status_h = 2u16;
         let content_area = Rect {
             x: area.x + (area.width.saturating_sub(content_width + 4)) / 2,
-            y: area.y + (area.height.saturating_sub(surf_h + 3)) / 2,
+            y: area.y + (area.height.saturating_sub(surf_h + status_h + 3)) / 2,
             width: content_width + 4,
-            height: surf_h + 3,
+            height: surf_h + status_h + 3,
         };
 
         let banner_area = Rect { x: content_area.x + 2, y: content_area.y, width: surf_w, height: surf_h };
@@ -48,12 +52,27 @@ impl HomePanel {
         surf.blit(buf, banner_area.x, banner_area.y);
 
         let splash_style = BobaStyle::new().fg(theme.global_fg).dim();
+        splash_surf_blit(&splash_style, &self.splash, buf, content_area.x + 2, banner_area.y + surf_h + 1);
 
-        let splash_surf = splash_style.render(&self.splash);
-        let splash_area =
-            Rect { x: content_area.x + 2, y: banner_area.y + surf_h + 1, width: self.splash.len() as u16, height: 1 };
-        splash_surf.blit(buf, splash_area.x, splash_area.y);
+        // Service status line under the splash.
+        let status_y = banner_area.y + surf_h + 3;
+        if status_y < area.bottom() {
+            let text = self.service_status.get_cloned();
+            let style = if text.starts_with("connected") {
+                BobaStyle::new().fg(theme.palette.success.to_rgb()).dim()
+            } else if text.starts_with("checking") {
+                BobaStyle::new().fg(theme.palette.fg_muted.to_rgb()).dim()
+            } else {
+                BobaStyle::new().fg(theme.palette.destructive.to_rgb()).dim()
+            };
+            style.render(&text).blit(buf, area.x + (area.width.saturating_sub(text.chars().count() as u16)) / 2, status_y);
+        }
     }
+}
+
+fn splash_surf_blit(style: &BobaStyle, splash: &str, buf: &mut Buffer, x: u16, y: u16) {
+    let surf = style.render(splash);
+    surf.blit(buf, x, y);
 }
 
 impl Default for HomePanel {

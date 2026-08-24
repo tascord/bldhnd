@@ -2,7 +2,6 @@ use {
     futures_signals::signal::Mutable,
     std::{
         sync::{Arc, LazyLock},
-        time::Instant,
     },
     tracing::{
         Level,
@@ -53,7 +52,6 @@ fn strip_ansi(s: &str) -> String {
 struct LogEntry {
     idx: usize,
     message: String,
-    timestamp: Instant,
 }
 
 pub struct LogStore {
@@ -65,7 +63,6 @@ impl LogStore {
 
     pub fn push(&self, message: String, idx: usize) {
         let mut entries = self.entries.lock_mut();
-        entries.push(LogEntry { idx, message, timestamp: Instant::now() });
         while entries.len() > 200 {
             entries.remove(0);
         }
