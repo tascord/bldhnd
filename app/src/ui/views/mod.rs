@@ -100,21 +100,35 @@ struct SettingsPanel {
     selection: Mutable<usize>,
     editor: bobatea::components::input::Input,
     editing: Mutable<bool>,
+    /// Add-volume form state.
+    adding: Mutable<bool>,
+    add_field: Mutable<usize>,
+    name_input: bobatea::components::input::Input,
+    path_input: bobatea::components::input::Input,
+    /// Shared with HomePanel's status line so saves refresh it.
+    service_status: Mutable<String>,
 }
 
 /// Editable config fields, indexed by selection.
 const SETTINGS_FIELDS: [&str; 3] = ["download_dir", "soulseek_username", "soulseek_password"];
 
 impl SettingsPanel {
-    fn new() -> Self {
+    fn new(service_status: Mutable<String>) -> Self {
         Self {
             selection: Mutable::new(0),
             editor: bobatea::components::input::Input::new("value"),
             editing: Mutable::new(false),
+            adding: Mutable::new(false),
+            add_field: Mutable::new(0),
+            name_input: bobatea::components::input::Input::new("name"),
+            path_input: bobatea::components::input::Input::new("path"),
+            service_status,
         }
     }
 
     fn editing(&self) -> bool { self.editing.get() }
+
+    fn adding(&self) -> bool { self.adding.get() }
 
     fn field_value(key: &str) -> String {
         let cfg = config().get_cloned();
@@ -137,15 +151,7 @@ impl SettingsPanel {
         }
     }
 
-    fn apply_field(key: &str, value: String) {
-        let empty = value.trim().is_empty();
-        let mut cfg = config().get_cloned();
-        match key {
-            "download_dir" => cfg.download_dir = (!empty).then_some(value),
-            "soulseek_username" => cfg.soulseek_username = (!empty).then_some(value),
-            "soulseek_password" => cfg.soulseek_password = (!empty).then_some(value),
-            _ => {}
-        }
+    fn apply_config(cfg: crate::Config) {
         let committed = cfg.clone();
         config().set(cfg);
         committed.commit();
@@ -153,6 +159,25 @@ impl SettingsPanel {
 
     /// Returns true when the key was consumed.
     fn handle_key(&self, app: EventTarget<AppEvent>, code: KeyCode) -> bool {
+        if self.adding.get() {
+            // Keep whichever field is active focused so its input receives keys.
+            let f = self.add_field.get();
+            (if f == 0 { &self.name_input } else { &self.path_input }).focus();
+            (if f == 0 { &self.path_input } else { &self.name_input }).blur();
+
+            match code {
+                KeyCode::Esc => self.cancel_add(),
+                KeyCode::Enter => return self.commit_add(app),
+                KeyCode::Tab | KeyCode::Up | KeyCode::Down => {
+                    self.add_field.set(1 - f);
+                }
+                _ => {
+                    (if f == 0 { &self.name_input } else { &self.path_input }).on_key(code);
+                }
+            }
+            return true;
+        }
+
         if self.editing.get() {
             match code {
                 KeyCode::Esc => {
@@ -163,11 +188,21 @@ impl SettingsPanel {
                 KeyCode::Enter => {
                     let key = SETTINGS_FIELDS[self.selection.get()];
                     let value = self.editor.value();
-                    Self::apply_field(key, value);
+
+                    let mut cfg = config().get_cloned();
+                    let empty = value.trim().is_empty();
+                    match key {
+                        "download_dir" => cfg.download_dir = (!empty).then_some(value),
+                        "soulseek_username" => cfg.soulseek_username = (!empty).then_some(value),
+                        "soulseek_password" => cfg.soulseek_password = (!empty).then_some(value),
+                        _ => {}
+                    }
+                    Self::apply_config(cfg);
+
                     tracing::info!("Config saved");
                     self.editing.set(false);
                     self.editor.blur();
-                    app.emit(AppEvent::RequestAnimationFrame);
+                    probe_service(self.service_status.clone(), app);
                 }
                 _ => self.editor.on_key(code),
             }
@@ -176,16 +211,56 @@ impl SettingsPanel {
 
         let len = SETTINGS_FIELDS.len();
         match code {
-            KeyCode::Up => self.selection.set(self.selection.get().saturating_sub(1)),
-            KeyCode::Down => self.selection.set((self.selection.get() + 1).min(len - 1)),
+            KeyCode::Char('a') | KeyCode::Char('A') => {
+                self.name_input.set_value("");
+                self.path_input.set_value("");
+                self.add_field.set(0);
+                self.adding.set(true);
+                true
+            }
+            KeyCode::Up => {
+                self.selection.set(self.selection.get().saturating_sub(1));
+                true
+            }
+            KeyCode::Down => {
+                self.selection.set((self.selection.get() + 1).min(len - 1));
+                true
+            }
             KeyCode::Enter => {
                 let key = SETTINGS_FIELDS[self.selection.get()];
                 self.editor.set_value(Self::field_value(key));
                 self.editor.focus();
                 self.editing.set(true);
+                true
             }
-            _ => return false,
+            _ => false,
         }
+    }
+
+    fn cancel_add(&self) {
+        tracing::info!("Add volume cancelled");
+        self.adding.set(false);
+        self.name_input.blur();
+        self.path_input.blur();
+    }
+
+    fn commit_add(&self, app: EventTarget<AppEvent>) -> bool {
+        let name = self.name_input.value().trim().to_string();
+        let path = self.path_input.value().trim().to_string();
+        if name.is_empty() || path.is_empty() {
+            tracing::warn!("Volume needs both a name and a path");
+            return true;
+        }
+
+        let mut cfg = config().get_cloned();
+        cfg.volumes.push(crate::Volume::new(name, path, cfg.volumes.len() as u8));
+        Self::apply_config(cfg);
+
+        tracing::info!("Volume added");
+        self.adding.set(false);
+        self.name_input.blur();
+        self.path_input.blur();
+        probe_service(self.service_status.clone(), app);
         true
     }
 
@@ -197,7 +272,6 @@ impl SettingsPanel {
         let accent = BobaStyle::new().fg(theme.palette.accent.to_rgb()).bold();
         let fg = BobaStyle::new().fg(theme.global_fg);
         let muted = BobaStyle::new().fg(theme.palette.fg_muted.to_rgb());
-        let sel_style = BobaStyle::new().fg(theme.palette.accent.to_rgb());
 
         accent.render("Service Config").blit(buf, area.x, area.y);
 
@@ -213,47 +287,99 @@ impl SettingsPanel {
             }
 
             if i == self.selection.get() && !self.editing.get() {
-                sel_style.render("▸").blit(buf, area.x, y);
+                sel_style(theme).render("▸").blit(buf, area.x, y);
             }
 
             muted.render(label).blit(buf, area.x + glyph_w, y);
 
             if i == editing_row {
-                let editor_area = Rect {
-                    x: area.x + glyph_w + label_w,
-                    y,
-                    width: area.right().saturating_sub(area.x + glyph_w + label_w).min(40),
-                    height: 1,
-                };
-                // Single-row inline editor.
-                let text = format!("{} ", self.editor.value());
-                fg.render(&text).blit(buf, editor_area.x, editor_area.y);
+                fg.render(&format!("{} ", self.editor.value())).blit(buf, area.x + glyph_w + label_w, y);
             } else {
                 fg.render(&Self::display_value(SETTINGS_FIELDS[i])).blit(buf, area.x + glyph_w + label_w, y);
             }
         }
 
-        let y = area.y + 2 + labels.len() as u16 * 2;
+        let mut y = area.y + 2 + labels.len() as u16 * 2;
+
         if y < area.bottom() {
-            muted
-                .render("server url")
-                .blit(buf, area.x + glyph_w, y);
+            muted.render("server url").blit(buf, area.x + glyph_w, y);
             fg.render(&format!(
                 "{} (read-only)",
                 config().get_cloned().bh_server_url.unwrap_or_else(|| "https://bldhnd.fargone.sh".into())
             ))
             .blit(buf, area.x + glyph_w + label_w, y);
+            y += 2;
+        }
+
+        // Volumes list
+        let volumes = config().get_cloned().volumes;
+        if y < area.bottom() {
+            accent.render("Volumes").blit(buf, area.x, y);
+            y += 1;
+            if volumes.is_empty() {
+                muted.render("(none — press a to add)").blit(buf, area.x + glyph_w, y);
+                y += 2;
+            } else {
+                for v in &volumes {
+                    if y >= area.bottom() {
+                        break;
+                    }
+                    fg.render(&format!("{} → {}", v.name, v.path)).blit(buf, area.x + glyph_w, y);
+                    y += 1;
+                }
+                y += 1;
+            }
+        }
+
+        // Add-volume form
+        if self.adding.get() && y < area.bottom().saturating_sub(4) {
+            accent.render("add volume").blit(buf, area.x, y);
+
+            let rows: [(&str, &bobatea::components::input::Input); 2] =
+                [("name", &self.name_input), ("path", &self.path_input)];
+            for (i, (label, input)) in rows.iter().enumerate() {
+                let ry = y + 1 + i as u16 * 2;
+                if ry >= area.bottom() - 1 {
+                    break;
+                }
+                if self.add_field.get() == i {
+                    sel_style(theme).render("▸").blit(buf, area.x, ry);
+                }
+                muted.render(label).blit(buf, area.x + glyph_w, ry);
+                fg.render(&format!("{} ", input.value())).blit(buf, area.x + glyph_w + label_w, ry);
+            }
         }
     }
 }
+
+fn sel_style(theme: &Theme) -> BobaStyle { BobaStyle::new().fg(theme.palette.accent.to_rgb()) }
 
 fn hint_for(tab: usize) -> &'static str {
     match tab {
         1 => "tab swap focus · enter focus/submit · esc blur · ↑/↓ type",
         2 => "s scan volumes",
-        3 => "↑/↓ select · enter edit/save",
+        3 => "↑/↓ select · enter edit/save · a add volume",
         _ => "",
     }
+}
+
+/// Probe the service asynchronously and update the Home status line.
+fn probe_service(status: Mutable<String>, app: EventTarget<AppEvent>) {
+    tokio::spawn(async move {
+        let res = tokio::task::spawn_blocking(|| {
+            crate::ipsea::Client::connect().get_config().map(|cfg| (cfg.volumes.len(), cfg.download_dir))
+        })
+        .await;
+        let line = match res {
+            Ok(Ok((vols, dir))) => {
+                format!("connected · {vols} volumes · download dir {}", dir.unwrap_or_else(|| "(unset)".into()))
+            }
+            Ok(Err(e)) => format!("service error — {e}"),
+            Err(e) => format!("service unreachable — {e}"),
+        };
+        status.set(line);
+        app.emit(AppEvent::RequestAnimationFrame);
+    });
 }
 
 #[allow(clippy::new_without_default)]
@@ -262,15 +388,17 @@ impl BldhndView {
         let active_tab = Mutable::new(0);
 
         let tabs = Tabs::new(["Home", "Search", "Library", "Settings", "Logs"]).active(&active_tab);
+        let home = home::HomePanel::new();
+        let settings = SettingsPanel::new(home.service_status.clone());
 
         Self {
             active_tab,
             tabs,
             tabs_area: Mutex::new(Rect::default()),
-            home: home::HomePanel::new(),
+            home,
             search: search::SearchPanel::new(),
             library_panel: LibraryPanel,
-            settings: SettingsPanel::new(),
+            settings,
             logs: logs::LogsPanel::new(),
         }
     }
@@ -297,23 +425,7 @@ impl View for BldhndView {
         self.search.wire_submit(app.clone());
 
         // Probe service connectivity for the Home tab.
-        let status = self.home.service_status.clone();
-        let app_probe = app.clone();
-        tokio::spawn(async move {
-            let res = tokio::task::spawn_blocking(|| {
-                crate::ipsea::Client::connect().get_config().map(|cfg| (cfg.volumes.len(), cfg.download_dir))
-            })
-            .await;
-            let line = match res {
-                Ok(Ok((vols, dir))) => {
-                    format!("connected · {vols} volumes · download dir {}", dir.unwrap_or_else(|| "(unset)".into()))
-                }
-                Ok(Err(e)) => format!("service error — {e}"),
-                Err(e) => format!("service unreachable — {e}"),
-            };
-            status.set(line);
-            app_probe.emit(AppEvent::RequestAnimationFrame);
-        });
+        probe_service(self.home.service_status.clone(), app.clone());
 
         let active_tab2 = self.active_tab.clone();
         let app_clone = app.clone();
@@ -330,7 +442,7 @@ impl View for BldhndView {
         app.on_key(bobatea::events::SubscriptionPriority::High, move |_ev, key| {
             let tab = active_tab2.get();
             let search_typing = tab == 1 && search.input_focused();
-            let settings_typing = tab == 3 && settings.editing();
+            let settings_typing = tab == 3 && (settings.editing() || settings.adding());
             match key.code {
                 KeyCode::Char('q') | KeyCode::Char('Q') if !search_typing && !settings_typing => {
                     app_clone.emit(AppEvent::Quit);

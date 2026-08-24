@@ -49,8 +49,12 @@ pub struct Config {
     pub soulseek_username: Option<String>,
     pub soulseek_password: Option<String>,
     pub download_dir: Option<String>,
+    /// Optional sections — clients (e.g. the TUI) may omit these.
+    #[serde(default)]
     pub quality: QualitySettings,
+    #[serde(default)]
     pub notifications: NotificationSettings,
+    #[serde(default)]
     pub plex: Option<PlexSettings>,
 }
 

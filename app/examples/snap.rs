@@ -74,6 +74,26 @@ async fn main() {
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     dump(&view, "SETTINGS SAVED", 3);
 
+    // Add a volume: 'a', type name, Tab, type path, Enter
+    ev.emit(key(crossterm::event::KeyCode::Char('a')));
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    for ch in ['m', 'u', 's', 'i', 'c'] {
+        ev.emit(key(crossterm::event::KeyCode::Char(ch)));
+    }
+    ev.emit(key(crossterm::event::KeyCode::Tab));
+    for ch in ['/', 't', 'm', 'p'] {
+        ev.emit(key(crossterm::event::KeyCode::Char(ch)));
+    }
+    dump(&view, "ADD VOLUME FORM", 3);
+    ev.emit(key(crossterm::event::KeyCode::Enter)); // commit volume
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await; // let probe finish
+    dump(&view, "VOLUME SAVED (status refreshed?)", 3);
+
+    // Home should now show refreshed status
+    ev.emit(key(crossterm::event::KeyCode::Char('1')));
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    dump(&view, "HOME AFTER SAVE", 16);
+
     // Search tab with query + rules
     ev.emit(key(crossterm::event::KeyCode::Char('2')));
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
