@@ -34,18 +34,18 @@
     };
   };
 
-  config = lib.mkIf (config.services.bldhnd-server.enable || config.services.bldhnd-service.enable || config.programs.bldhnd.enable) {
+  config = {
     assertions = [
       {
-        assertion = config.services.bldhnd-server.package != null;
+        assertion = !config.services.bldhnd-server.enable || config.services.bldhnd-server.package != null;
         message = "services.bldhnd-server.package must be set";
       }
       {
-        assertion = config.services.bldhnd-service.package != null;
+        assertion = !config.services.bldhnd-service.enable || config.services.bldhnd-service.package != null;
         message = "services.bldhnd-service.package must be set";
       }
       {
-        assertion = config.programs.bldhnd.package != null;
+        assertion = !config.programs.bldhnd.enable || config.programs.bldhnd.package != null;
         message = "programs.bldhnd.package must be set";
       }
     ];

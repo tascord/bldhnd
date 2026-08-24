@@ -1,0 +1,22 @@
+[package]
+name = "bobatea"
+version = "0.0.2"
+edition = "2024"
+description = "Terminal layout + styling you won't hate."
+license = "MIT"
+repository = "https://github.com/tascord/boba"
+
+[dependencies]
+anyhow = "1.0.102"
+crossterm = { version = "0.29.0", features = ["event-stream"] }
+futures = "0.3.32"
+futures-signals = "0.3.34"
+ratatui = { version = "0.30.1", features = ["unstable-widget-ref"] }
+tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread", "rt", "sync", "time"] }
+tracing = "0.1.44"
+unicode-width = "0.2.2"
+uuid = { version = "1.23.3", features = ["v4"] }
+colorsys = "0.6.7"
+rand = "0.9"
+figlet-rs = "0.1.5"
+image = "0.25"
