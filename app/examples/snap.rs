@@ -94,6 +94,48 @@ async fn main() {
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     dump(&view, "HOME AFTER SAVE", 16);
 
+    // ── Volume manager ─────────────────────────────────────────────────
+    ev.emit(key(crossterm::event::KeyCode::Char('4'))); // settings
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    // Selection is on field 1; Down x2 lands on the first volume.
+    // Enter opens rename, type, Enter commits.
+    for _ in 0..2 {
+        ev.emit(key(crossterm::event::KeyCode::Down));
+    }
+    ev.emit(key(crossterm::event::KeyCode::Enter));
+    ev.emit(key(crossterm::event::KeyCode::End));
+    ev.emit(key(crossterm::event::KeyCode::Char('-')));
+    ev.emit(key(crossterm::event::KeyCode::Enter));
+    dump(&view, "VOLUME RENAMED?", 3);
+
+    // 'm' opens max-size edit; empty value clears cap.
+    ev.emit(key(crossterm::event::KeyCode::Char('m')));
+    for ch in ['1', '2'] {
+        ev.emit(key(crossterm::event::KeyCode::Char(ch)));
+    }
+    ev.emit(key(crossterm::event::KeyCode::Enter));
+    dump(&view, "VOLUME MAX SET?", 3);
+
+    // Add a second volume, then delete the first one
+    ev.emit(key(crossterm::event::KeyCode::Char('a')));
+    for ch in ['f', 'i', 'l', 'm', 's'] {
+        ev.emit(key(crossterm::event::KeyCode::Char(ch)));
+    }
+    ev.emit(key(crossterm::event::KeyCode::Tab));
+    for ch in ['/', 'd', 'a', 't', 'a'] {
+        ev.emit(key(crossterm::event::KeyCode::Char(ch)));
+    }
+    ev.emit(key(crossterm::event::KeyCode::Enter));
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    dump(&view, "TWO VOLUMES", 3);
+
+    // Selection is on volume 1; Down selects the new volume, 'd' deletes it
+    ev.emit(key(crossterm::event::KeyCode::Down));
+    ev.emit(key(crossterm::event::KeyCode::Char('d')));
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    dump(&view, "AFTER DELETE", 3);
+
     // Search tab with query + rules
     ev.emit(key(crossterm::event::KeyCode::Char('2')));
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;

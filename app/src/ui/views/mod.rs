@@ -95,11 +95,13 @@ impl LibraryPanel {
 }
 
 /// Editable view of the service config.
+/// Editable view of the service config, including a full volume manager.
 #[derive(Clone)]
 struct SettingsPanel {
     selection: Mutable<usize>,
     editor: bobatea::components::input::Input,
-    editing: Mutable<bool>,
+    /// What the inline editor is currently editing.
+    editing: Mutable<Option<EditTarget>>,
     /// Add-volume form state.
     adding: Mutable<bool>,
     add_field: Mutable<usize>,
@@ -109,7 +111,17 @@ struct SettingsPanel {
     service_status: Mutable<String>,
 }
 
-/// Editable config fields, indexed by selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EditTarget {
+    /// One of SETTINGS_FIELDS.
+    Field(usize),
+    /// Rename volume #i.
+    VolumeName(usize),
+    /// Edit max size (GB) of volume #i; empty value clears the cap.
+    VolumeMax(usize),
+}
+
+/// Editable config fields, indexed by selection before any volumes.
 const SETTINGS_FIELDS: [&str; 3] = ["download_dir", "soulseek_username", "soulseek_password"];
 
 impl SettingsPanel {
@@ -117,7 +129,7 @@ impl SettingsPanel {
         Self {
             selection: Mutable::new(0),
             editor: bobatea::components::input::Input::new("value"),
-            editing: Mutable::new(false),
+            editing: Mutable::new(None),
             adding: Mutable::new(false),
             add_field: Mutable::new(0),
             name_input: bobatea::components::input::Input::new("name"),
@@ -126,7 +138,7 @@ impl SettingsPanel {
         }
     }
 
-    fn editing(&self) -> bool { self.editing.get() }
+    fn editing(&self) -> bool { self.editing.get().is_some() }
 
     fn adding(&self) -> bool { self.adding.get() }
 
@@ -151,10 +163,77 @@ impl SettingsPanel {
         }
     }
 
-    fn apply_config(cfg: crate::Config) {
+    fn apply_config(&self, cfg: crate::Config, app: &EventTarget<AppEvent>) {
         let committed = cfg.clone();
         config().set(cfg);
         committed.commit();
+        probe_service(self.service_status.clone(), app.clone());
+    }
+
+    fn n_rows(&self) -> usize { SETTINGS_FIELDS.len() + config().get_cloned().volumes.len() }
+
+    fn begin_edit(&self, target: EditTarget) {
+        let current = match target {
+            EditTarget::Field(i) => Self::field_value(SETTINGS_FIELDS[i]),
+            EditTarget::VolumeName(i) => config().get_cloned().volumes.get(i).map(|v| v.name.clone()).unwrap_or_default(),
+            EditTarget::VolumeMax(i) => config()
+                .get_cloned()
+                .volumes
+                .get(i)
+                .and_then(|v| v.max_size_gb)
+                .map(|g| g.to_string())
+                .unwrap_or_default(),
+        };
+        self.editor.set_value(current);
+        self.editor.focus();
+        self.editing.set(Some(target));
+    }
+
+    /// Commit the active inline edit. Returns false if there was nothing to commit.
+    fn commit_edit(&self, app: EventTarget<AppEvent>) -> bool {
+        let Some(target) = self.editing.get() else { return false };
+        let value = self.editor.value();
+        let empty = value.trim().is_empty();
+
+        let mut cfg = config().get_cloned();
+        match target {
+            EditTarget::Field(i) => match SETTINGS_FIELDS[i] {
+                "download_dir" => cfg.download_dir = (!empty).then_some(value),
+                "soulseek_username" => cfg.soulseek_username = (!empty).then_some(value),
+                "soulseek_password" => cfg.soulseek_password = (!empty).then_some(value),
+                _ => {}
+            },
+            EditTarget::VolumeName(i) => {
+                if !empty {
+                    if let Some(v) = cfg.volumes.get_mut(i) {
+                        v.name = value;
+                    }
+                }
+            }
+            EditTarget::VolumeMax(i) => {
+                if let Some(v) = cfg.volumes.get_mut(i) {
+                    v.max_size_gb = if empty { None } else { value.trim().parse::<f32>().ok() };
+                }
+            }
+        }
+
+        tracing::info!("Config saved");
+        self.editing.set(None);
+        self.editor.blur();
+        self.apply_config(cfg, &app);
+        true
+    }
+
+    fn delete_volume(&self, idx: usize, app: EventTarget<AppEvent>) {
+        let mut cfg = config().get_cloned();
+        if idx < cfg.volumes.len() {
+            let removed = cfg.volumes.remove(idx);
+            tracing::info!("Removed volume {}", removed.name);
+            // Keep the cursor inside the list after removal.
+            let max = self.n_rows().saturating_sub(1);
+            self.selection.set(self.selection.get().min(max));
+            self.apply_config(cfg, &app);
+        }
     }
 
     /// Returns true when the key was consumed.
@@ -178,38 +257,26 @@ impl SettingsPanel {
             return true;
         }
 
-        if self.editing.get() {
+        // ── Inline editor ──────────────────────────────────────────────────
+        if self.editing.get().is_some() {
             match code {
                 KeyCode::Esc => {
-                    tracing::info!("Config edit cancelled");
-                    self.editing.set(false);
+                    tracing::info!("Edit cancelled");
+                    self.editing.set(None);
                     self.editor.blur();
                 }
                 KeyCode::Enter => {
-                    let key = SETTINGS_FIELDS[self.selection.get()];
-                    let value = self.editor.value();
-
-                    let mut cfg = config().get_cloned();
-                    let empty = value.trim().is_empty();
-                    match key {
-                        "download_dir" => cfg.download_dir = (!empty).then_some(value),
-                        "soulseek_username" => cfg.soulseek_username = (!empty).then_some(value),
-                        "soulseek_password" => cfg.soulseek_password = (!empty).then_some(value),
-                        _ => {}
-                    }
-                    Self::apply_config(cfg);
-
-                    tracing::info!("Config saved");
-                    self.editing.set(false);
-                    self.editor.blur();
-                    probe_service(self.service_status.clone(), app);
+                    return self.commit_edit(app);
                 }
                 _ => self.editor.on_key(code),
             }
             return true;
         }
 
-        let len = SETTINGS_FIELDS.len();
+        // ── List navigation / actions ──────────────────────────────────────
+        let sel = self.selection.get();
+        let vol_sel = sel.checked_sub(SETTINGS_FIELDS.len());
+
         match code {
             KeyCode::Char('a') | KeyCode::Char('A') => {
                 self.name_input.set_value("");
@@ -218,19 +285,27 @@ impl SettingsPanel {
                 self.adding.set(true);
                 true
             }
-            KeyCode::Up => {
-                self.selection.set(self.selection.get().saturating_sub(1));
+            KeyCode::Char('d') | KeyCode::Char('D') if vol_sel.is_some() => {
+                self.delete_volume(vol_sel.unwrap(), app);
                 true
             }
-            KeyCode::Down => {
-                self.selection.set((self.selection.get() + 1).min(len - 1));
+            KeyCode::Char('m') | KeyCode::Char('M') if vol_sel.is_some() => {
+                self.begin_edit(EditTarget::VolumeMax(vol_sel.unwrap()));
                 true
             }
             KeyCode::Enter => {
-                let key = SETTINGS_FIELDS[self.selection.get()];
-                self.editor.set_value(Self::field_value(key));
-                self.editor.focus();
-                self.editing.set(true);
+                match vol_sel {
+                    None => self.begin_edit(EditTarget::Field(sel)),
+                    Some(i) => self.begin_edit(EditTarget::VolumeName(i)),
+                }
+                true
+            }
+            KeyCode::Up => {
+                self.selection.set(sel.saturating_sub(1));
+                true
+            }
+            KeyCode::Down => {
+                self.selection.set((sel + 1).min(self.n_rows().saturating_sub(1)));
                 true
             }
             _ => false,
@@ -254,13 +329,12 @@ impl SettingsPanel {
 
         let mut cfg = config().get_cloned();
         cfg.volumes.push(crate::Volume::new(name, path, cfg.volumes.len() as u8));
-        Self::apply_config(cfg);
+        self.apply_config(cfg, &app);
 
         tracing::info!("Volume added");
         self.adding.set(false);
         self.name_input.blur();
         self.path_input.blur();
-        probe_service(self.service_status.clone(), app);
         true
     }
 
@@ -275,32 +349,33 @@ impl SettingsPanel {
 
         accent.render("Service Config").blit(buf, area.x, area.y);
 
-        let labels = ["download dir", "soulseek user", "soulseek pass"];
         let glyph_w = 2u16;
         let label_w = 16u16;
-        let editing_row = self.editing.get().then_some(self.selection.get()).unwrap_or(usize::MAX);
+        let editing_target = self.editing.get();
 
-        for (i, label) in labels.iter().enumerate() {
+        // ── Config fields ──────────────────────────────────────────────────
+        for (i, label) in ["download dir", "soulseek user", "soulseek pass"].iter().enumerate() {
             let y = area.y + 2 + i as u16 * 2;
             if y >= area.bottom() {
                 break;
             }
 
-            if i == self.selection.get() && !self.editing.get() {
+            if i == self.selection.get() && editing_target.is_none() {
                 sel_style(theme).render("▸").blit(buf, area.x, y);
             }
 
             muted.render(label).blit(buf, area.x + glyph_w, y);
 
-            if i == editing_row {
+            if editing_target == Some(EditTarget::Field(i)) {
                 fg.render(&format!("{} ", self.editor.value())).blit(buf, area.x + glyph_w + label_w, y);
             } else {
                 fg.render(&Self::display_value(SETTINGS_FIELDS[i])).blit(buf, area.x + glyph_w + label_w, y);
             }
         }
 
-        let mut y = area.y + 2 + labels.len() as u16 * 2;
+        let mut y = area.y + 2 + SETTINGS_FIELDS.len() as u16 * 2;
 
+        // ── Server url (read-only) ─────────────────────────────────────────
         if y < area.bottom() {
             muted.render("server url").blit(buf, area.x + glyph_w, y);
             fg.render(&format!(
@@ -311,27 +386,55 @@ impl SettingsPanel {
             y += 2;
         }
 
-        // Volumes list
+        // ── Volumes ────────────────────────────────────────────────────────
         let volumes = config().get_cloned().volumes;
+
         if y < area.bottom() {
             accent.render("Volumes").blit(buf, area.x, y);
+            muted
+                .render("enter rename · m max size · d delete · a add")
+                .blit(buf, area.x + 8, y);
             y += 1;
-            if volumes.is_empty() {
-                muted.render("(none — press a to add)").blit(buf, area.x + glyph_w, y);
-                y += 2;
-            } else {
-                for v in &volumes {
-                    if y >= area.bottom() {
-                        break;
-                    }
-                    fg.render(&format!("{} → {}", v.name, v.path)).blit(buf, area.x + glyph_w, y);
-                    y += 1;
-                }
-                y += 1;
-            }
         }
 
-        // Add-volume form
+        for (i, v) in volumes.iter().enumerate() {
+            if y >= area.bottom() {
+                break;
+            }
+            let sel_idx = SETTINGS_FIELDS.len() + i;
+
+            if sel_idx == self.selection.get() && editing_target.is_none() {
+                sel_style(theme).render("▸").blit(buf, area.x, y);
+            }
+
+            let cap = match v.max_size_gb {
+                Some(max) => format!("[cap {:.0}G]", max),
+                None => "[uncapped]".to_string(),
+            };
+
+            muted.render(&format!("{:>2}.", i + 1)).blit(buf, area.x + glyph_w - 2, y);
+
+            let name_x = area.x + glyph_w + 3;
+            if editing_target == Some(EditTarget::VolumeName(i)) {
+                fg.render(&format!("{} ", self.editor.value())).blit(buf, name_x, y);
+            } else {
+                fg.render(&v.name).blit(buf, name_x, y);
+            }
+
+            let meta = format!("→ {} {}", v.path, cap);
+            muted.render(&meta).blit(buf, name_x + v.name.chars().count() as u16 + 1, y);
+
+            if editing_target == Some(EditTarget::VolumeMax(i)) {
+                let mx = name_x + meta.chars().count() as u16 + 2;
+                if mx < area.right() {
+                    fg.render(&format!("{} ", self.editor.value())).blit(buf, mx, y);
+                }
+            }
+
+            y += 1;
+        }
+
+        // ── Add-volume form ────────────────────────────────────────────────
         if self.adding.get() && y < area.bottom().saturating_sub(4) {
             accent.render("add volume").blit(buf, area.x, y);
 
@@ -354,11 +457,12 @@ impl SettingsPanel {
 
 fn sel_style(theme: &Theme) -> BobaStyle { BobaStyle::new().fg(theme.palette.accent.to_rgb()) }
 
+
 fn hint_for(tab: usize) -> &'static str {
     match tab {
         1 => "tab swap focus · enter focus/submit · esc blur · ↑/↓ type",
         2 => "s scan volumes",
-        3 => "↑/↓ select · enter edit/save · a add volume",
+        3 => "↑/↓ select · enter edit/rename · m max size · d delete · a add",
         _ => "",
     }
 }
@@ -456,7 +560,7 @@ impl View for BldhndView {
                 KeyCode::Char(c @ '1'..='5') => {
                     active_tab2.set((c as u8 - b'1') as usize);
                     search.blur_input();
-                    settings.editing.set(false);
+                    settings.editing.set(None);
                     settings.editor.blur();
                 }
                 KeyCode::Char('s') | KeyCode::Char('S') if tab == 2 => {
