@@ -94,46 +94,76 @@ impl LibraryPanel {
     }
 }
 
-/// Editable view of the service config.
-/// Editable view of the service config, including a full volume manager.
+/// Editable view of the service config, organised into subsections.
 #[derive(Clone)]
 struct SettingsPanel {
+    section: Mutable<usize>,
     selection: Mutable<usize>,
     editor: bobatea::components::input::Input,
     /// What the inline editor is currently editing.
-    editing: Mutable<Option<EditTarget>>,
-    /// Add-volume form state.
+    editing: Mutable<Option<Row>>,
+    /// Multi-field add form (volumes / indexers).
     adding: Mutable<bool>,
     add_field: Mutable<usize>,
-    name_input: bobatea::components::input::Input,
-    path_input: bobatea::components::input::Input,
+    add_inputs: Vec<bobatea::components::input::Input>,
     /// Shared with HomePanel's status line so saves refresh it.
     service_status: Mutable<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EditTarget {
-    /// One of SETTINGS_FIELDS.
-    Field(usize),
-    /// Rename volume #i.
-    VolumeName(usize),
-    /// Edit max size (GB) of volume #i; empty value clears the cap.
-    VolumeMax(usize),
+enum Sec {
+    General,
+    Volumes,
+    Soulseek,
+    Torrent,
+    Usenet,
 }
 
-/// Editable config fields, indexed by selection before any volumes.
-const SETTINGS_FIELDS: [&str; 3] = ["download_dir", "soulseek_username", "soulseek_password"];
+const SECTIONS: [Sec; 5] = [Sec::General, Sec::Volumes, Sec::Soulseek, Sec::Torrent, Sec::Usenet];
+const SECTION_NAMES: [&str; 5] = ["General", "Volumes", "Soulseek", "Torrent", "Usenet"];
+
+impl Sec {
+    fn from_index(i: usize) -> Sec { SECTIONS[i.min(SECTIONS.len() - 1)] }
+}
+
+/// One selectable row inside a section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Row {
+    DownloadDir,
+    ServerUrl,
+    /// Volume #i, field 0=name 1=path 2=max-size.
+    VolField(usize, usize),
+    SlskUser,
+    SlskPass,
+    /// Indexer of kind (0=torrent, 1=usenet), #idx, field 0=name 1=url 2=api-key.
+    IdxField(u8, usize, usize),
+    QbitUrl,
+    QbitUser,
+    QbitPass,
+    SabUrl,
+    SabKey,
+    Aria2Url,
+    Aria2Secret,
+}
+
+fn mask(v: &str) -> String {
+    if v.is_empty() { "(unset)".into() } else { "***".into() }
+}
 
 impl SettingsPanel {
     fn new(service_status: Mutable<String>) -> Self {
         Self {
+            section: Mutable::new(0),
             selection: Mutable::new(0),
             editor: bobatea::components::input::Input::new("value"),
             editing: Mutable::new(None),
             adding: Mutable::new(false),
             add_field: Mutable::new(0),
-            name_input: bobatea::components::input::Input::new("name"),
-            path_input: bobatea::components::input::Input::new("path"),
+            add_inputs: vec![
+                bobatea::components::input::Input::new("name"),
+                bobatea::components::input::Input::new("value"),
+                bobatea::components::input::Input::new("api key"),
+            ],
             service_status,
         }
     }
@@ -142,24 +172,13 @@ impl SettingsPanel {
 
     fn adding(&self) -> bool { self.adding.get() }
 
-    fn field_value(key: &str) -> String {
-        let cfg = config().get_cloned();
-        match key {
-            "download_dir" => cfg.download_dir.unwrap_or_default(),
-            "soulseek_username" => cfg.soulseek_username.unwrap_or_default(),
-            "soulseek_password" => cfg.soulseek_password.unwrap_or_default(),
-            _ => String::new(),
-        }
-    }
-
-    fn display_value(key: &str) -> String {
-        let v = Self::field_value(key);
-        if key == "soulseek_password" && !v.is_empty() {
-            "***".to_string()
-        } else if v.is_empty() {
-            "(unset)".to_string()
-        } else {
-            v
+    /// Reset any transient UI state (used when leaving the tab).
+    fn reset_transient(&self) {
+        self.editing.set(None);
+        self.editor.blur();
+        self.adding.set(false);
+        for i in &self.add_inputs {
+            i.blur();
         }
     }
 
@@ -170,52 +189,186 @@ impl SettingsPanel {
         probe_service(self.service_status.clone(), app.clone());
     }
 
-    fn n_rows(&self) -> usize { SETTINGS_FIELDS.len() + config().get_cloned().volumes.len() }
+    // ── Row model ─────────────────────────────────────────────────────────
 
-    fn begin_edit(&self, target: EditTarget) {
-        let current = match target {
-            EditTarget::Field(i) => Self::field_value(SETTINGS_FIELDS[i]),
-            EditTarget::VolumeName(i) => config().get_cloned().volumes.get(i).map(|v| v.name.clone()).unwrap_or_default(),
-            EditTarget::VolumeMax(i) => config()
-                .get_cloned()
-                .volumes
-                .get(i)
-                .and_then(|v| v.max_size_gb)
-                .map(|g| g.to_string())
-                .unwrap_or_default(),
-        };
-        self.editor.set_value(current);
-        self.editor.focus();
-        self.editing.set(Some(target));
+    fn rows(&self, sec: Sec) -> Vec<Row> {
+        let cfg = config().get_cloned();
+        match sec {
+            Sec::General => vec![Row::DownloadDir, Row::ServerUrl],
+            Sec::Volumes => (0..cfg.volumes.len())
+                .flat_map(|i| [Row::VolField(i, 0), Row::VolField(i, 1), Row::VolField(i, 2)])
+                .collect(),
+            Sec::Soulseek => vec![Row::SlskUser, Row::SlskPass],
+            Sec::Torrent => {
+                let mut v: Vec<Row> = (0..cfg.torrent_indexers.len())
+                    .flat_map(|i| [Row::IdxField(0, i, 0), Row::IdxField(0, i, 1), Row::IdxField(0, i, 2)])
+                    .collect();
+                v.extend([Row::QbitUrl, Row::QbitUser, Row::QbitPass]);
+                v
+            }
+            Sec::Usenet => {
+                let mut v: Vec<Row> = (0..cfg.usenet_indexers.len())
+                    .flat_map(|i| [Row::IdxField(1, i, 0), Row::IdxField(1, i, 1), Row::IdxField(1, i, 2)])
+                    .collect();
+                v.extend([Row::SabUrl, Row::SabKey, Row::Aria2Url, Row::Aria2Secret]);
+                v
+            }
+        }
     }
 
-    /// Commit the active inline edit. Returns false if there was nothing to commit.
-    fn commit_edit(&self, app: EventTarget<AppEvent>) -> bool {
-        let Some(target) = self.editing.get() else { return false };
-        let value = self.editor.value();
-        let empty = value.trim().is_empty();
+    /// (label, display value, is-secret) for a row.
+    fn row_label_value(&self, row: Row) -> (String, String, bool) {
+        let cfg = config().get_cloned();
+        match row {
+            Row::DownloadDir => ("download dir".into(), cfg.download_dir.clone().unwrap_or_else(|| "(unset)".into()), false),
+            Row::ServerUrl => (
+                "server url".into(),
+                format!("{} (read-only)", cfg.bh_server_url.unwrap_or_else(|| "https://bldhnd.fargone.sh".into())),
+                false,
+            ),
+            Row::VolField(i, f) => {
+                let v = cfg.volumes.get(i);
+                match f {
+                    0 => (format!("{:>2}. name", i + 1), v.map(|v| v.name.clone()).unwrap_or_default(), false),
+                    1 => ("path".into(), v.map(|v| v.path.clone()).unwrap_or_default(), false),
+                    _ => (
+                        "max size (gb)".into(),
+                        v.and_then(|v| v.max_size_gb).map(|g| format!("{g:.0}")).unwrap_or_else(|| "(uncapped)".into()),
+                        false,
+                    ),
+                }
+            }
+            Row::SlskUser => ("username".into(), cfg.soulseek_username.unwrap_or_default(), false),
+            Row::SlskPass => ("password".into(), mask(&cfg.soulseek_password.unwrap_or_default()), true),
+            Row::IdxField(kind, i, f) => {
+                let list = if kind == 0 { &cfg.torrent_indexers } else { &cfg.usenet_indexers };
+                let e = list.get(i);
+                match f {
+                    0 => (format!("{:>2}. name", i + 1), e.map(|e| e.name.clone()).unwrap_or_default(), false),
+                    1 => ("url".into(), e.map(|e| e.url.clone()).unwrap_or_default(), false),
+                    _ => ("api key".into(), e.map(|e| mask(e.api_key.as_deref().unwrap_or(""))).unwrap_or_default(), true),
+                }
+            }
+            Row::QbitUrl => ("qbt url".into(), cfg.qbittorrent.as_ref().map(|q| q.url.clone()).unwrap_or_default(), false),
+            Row::QbitUser => ("qbt user".into(), cfg.qbittorrent.as_ref().map(|q| q.username.clone()).unwrap_or_default(), false),
+            Row::QbitPass => ("qbt pass".into(), cfg.qbittorrent.as_ref().map(|q| mask(&q.password)).unwrap_or_default(), true),
+            Row::SabUrl => ("sab url".into(), cfg.sabnzbd.as_ref().map(|s| s.url.clone()).unwrap_or_default(), false),
+            Row::SabKey => ("sab key".into(), cfg.sabnzbd.as_ref().map(|s| mask(&s.api_key)).unwrap_or_default(), true),
+            Row::Aria2Url => ("aria2 url".into(), cfg.aria2.as_ref().map(|a| a.url.clone()).unwrap_or_default(), false),
+            Row::Aria2Secret => ("aria2 secret".into(), cfg.aria2.as_ref().map(|a| mask(&a.secret)).unwrap_or_default(), true),
+        }
+    }
 
-        let mut cfg = config().get_cloned();
-        match target {
-            EditTarget::Field(i) => match SETTINGS_FIELDS[i] {
-                "download_dir" => cfg.download_dir = (!empty).then_some(value),
-                "soulseek_username" => cfg.soulseek_username = (!empty).then_some(value),
-                "soulseek_password" => cfg.soulseek_password = (!empty).then_some(value),
-                _ => {}
-            },
-            EditTarget::VolumeName(i) => {
-                if !empty {
-                    if let Some(v) = cfg.volumes.get_mut(i) {
-                        v.name = value;
+    fn row_current_value(&self, row: Row) -> String {
+        let (_, val, secret) = self.row_label_value(row);
+        if secret && val != "(unset)" {
+            // Fetch the real value for editing rather than the mask.
+            return self.row_real_secret(row);
+        }
+        if val == "(unset)" || val == "(uncapped)" || val.ends_with("(read-only)") {
+            String::new()
+        } else {
+            val
+        }
+    }
+
+    fn row_real_secret(&self, row: Row) -> String {
+        let cfg = config().get_cloned();
+        match row {
+            Row::SlskPass => cfg.soulseek_password.unwrap_or_default(),
+            Row::IdxField(kind, i, _) => {
+                let list = if kind == 0 { &cfg.torrent_indexers } else { &cfg.usenet_indexers };
+                list.get(i).and_then(|e| e.api_key.clone()).unwrap_or_default()
+            }
+            Row::QbitPass => cfg.qbittorrent.map(|q| q.password).unwrap_or_default(),
+            Row::SabKey => cfg.sabnzbd.map(|s| s.api_key).unwrap_or_default(),
+            Row::Aria2Secret => cfg.aria2.map(|a| a.secret).unwrap_or_default(),
+            _ => String::new(),
+        }
+    }
+
+    fn set_row(&self, cfg: &mut crate::Config, row: Row, value: String) {
+        let empty = value.trim().is_empty();
+        match row {
+            Row::DownloadDir => cfg.download_dir = (!empty).then_some(value),
+            Row::ServerUrl | Row::VolField(_, 99) => {}
+            Row::VolField(i, f) => {
+                if let Some(v) = cfg.volumes.get_mut(i) {
+                    match f {
+                        0 if !empty => v.name = value,
+                        1 => v.path = value,
+                        2 => v.max_size_gb = if empty { None } else { value.trim().parse::<f32>().ok() },
+                        _ => {}
                     }
                 }
             }
-            EditTarget::VolumeMax(i) => {
-                if let Some(v) = cfg.volumes.get_mut(i) {
-                    v.max_size_gb = if empty { None } else { value.trim().parse::<f32>().ok() };
+            Row::SlskUser => cfg.soulseek_username = (!empty).then_some(value),
+            Row::SlskPass => cfg.soulseek_password = (!empty).then_some(value),
+            Row::IdxField(kind, i, f) => {
+                let list = if kind == 0 { &mut cfg.torrent_indexers } else { &mut cfg.usenet_indexers };
+                if let Some(e) = list.get_mut(i) {
+                    match f {
+                        0 if !empty => e.name = value,
+                        1 if !empty => e.url = value,
+                        2 => e.api_key = (!empty).then_some(value),
+                        _ => {}
+                    }
+                }
+            }
+            Row::QbitUrl | Row::QbitUser | Row::QbitPass => {
+                let q = cfg.qbittorrent.get_or_insert_with(|| crate::ClientEndpoint {
+                    url: String::new(),
+                    username: String::new(),
+                    password: String::new(),
+                });
+                match row {
+                    Row::QbitUrl if !empty => q.url = value,
+                    Row::QbitUser if !empty => q.username = value,
+                    Row::QbitPass if !empty => q.password = value,
+                    _ => {}
+                }
+            }
+            Row::SabUrl | Row::SabKey => {
+                let s = cfg.sabnzbd.get_or_insert_with(|| crate::ApiKeyEndpoint {
+                    url: String::new(),
+                    api_key: String::new(),
+                });
+                match row {
+                    Row::SabUrl if !empty => s.url = value,
+                    Row::SabKey if !empty => s.api_key = value,
+                    _ => {}
+                }
+            }
+            Row::Aria2Url | Row::Aria2Secret => {
+                let a = cfg.aria2.get_or_insert_with(|| crate::SecretEndpoint {
+                    url: String::new(),
+                    secret: String::new(),
+                });
+                match row {
+                    Row::Aria2Url if !empty => a.url = value,
+                    Row::Aria2Secret if !empty => a.secret = value,
+                    _ => {}
                 }
             }
         }
+    }
+
+    fn begin_edit(&self, row: Row) {
+        if matches!(row, Row::ServerUrl) {
+            tracing::info!("server url is read-only");
+            return;
+        }
+        self.editor.set_value(self.row_current_value(row));
+        self.editor.focus();
+        self.editing.set(Some(row));
+    }
+
+    fn commit_edit(&self, app: EventTarget<AppEvent>) -> bool {
+        let Some(row) = self.editing.get() else { return false };
+        let value = self.editor.value();
+
+        let mut cfg = config().get_cloned();
+        self.set_row(&mut cfg, row, value);
 
         tracing::info!("Config saved");
         self.editing.set(None);
@@ -224,35 +377,128 @@ impl SettingsPanel {
         true
     }
 
-    fn delete_volume(&self, idx: usize, app: EventTarget<AppEvent>) {
+    /// Delete the item (volume / indexer) the given row belongs to.
+    fn delete_item(&self, row: Row, app: EventTarget<AppEvent>) {
         let mut cfg = config().get_cloned();
-        if idx < cfg.volumes.len() {
-            let removed = cfg.volumes.remove(idx);
-            tracing::info!("Removed volume {}", removed.name);
-            // Keep the cursor inside the list after removal.
-            let max = self.n_rows().saturating_sub(1);
-            self.selection.set(self.selection.get().min(max));
-            self.apply_config(cfg, &app);
+        match row {
+            Row::VolField(i, _) => {
+                if i < cfg.volumes.len() {
+                    let removed = cfg.volumes.remove(i);
+                    tracing::info!("Removed volume {}", removed.name);
+                }
+            }
+            Row::IdxField(0, i, _) => {
+                if i < cfg.torrent_indexers.len() {
+                    let removed = cfg.torrent_indexers.remove(i);
+                    tracing::info!("Removed torrent indexer {}", removed.name);
+                }
+            }
+            Row::IdxField(_, i, _) => {
+                if i < cfg.usenet_indexers.len() {
+                    let removed = cfg.usenet_indexers.remove(i);
+                    tracing::info!("Removed usenet indexer {}", removed.name);
+                }
+            }
+            _ => return,
         }
+        let max = self.rows(Sec::from_index(self.section.get())).len().saturating_sub(1);
+        self.selection.set(self.selection.get().min(max));
+        self.apply_config(cfg, &app);
+    }
+
+    /// Fields shown by the add-form for the active section.
+    fn add_form_labels(&self, sec: Sec) -> &'static [&'static str] {
+        match sec {
+            Sec::Volumes => &["name", "path"],
+            Sec::Torrent | Sec::Usenet => &["name", "url", "api key"],
+            _ => &[],
+        }
+    }
+
+    fn start_add(&self) {
+        let sec = Sec::from_index(self.section.get());
+        let labels = self.add_form_labels(sec);
+        if labels.is_empty() {
+            return;
+        }
+        for inp in &self.add_inputs {
+            inp.set_value(String::new());
+            inp.blur();
+        }
+        self.add_field.set(0);
+        self.add_inputs[0].focus();
+        self.adding.set(true);
+    }
+
+    fn cancel_add(&self) {
+        tracing::info!("Add cancelled");
+        self.adding.set(false);
+        for i in &self.add_inputs {
+            i.blur();
+        }
+    }
+
+    fn commit_add(&self, app: EventTarget<AppEvent>) -> bool {
+        let sec = Sec::from_index(self.section.get());
+        let vals: Vec<String> = self.add_inputs.iter().take(3).map(|i| i.value().trim().to_string()).collect();
+
+        let mut cfg = config().get_cloned();
+        match sec {
+            Sec::Volumes => {
+                let (name, path) = (vals[0].clone(), vals[1].clone());
+                if name.is_empty() || path.is_empty() {
+                    tracing::warn!("Volume needs both a name and a path");
+                    return true;
+                }
+                cfg.volumes.push(crate::Volume::new(name, path, cfg.volumes.len() as u8));
+                tracing::info!("Volume added");
+            }
+            Sec::Torrent => {
+                let (name, url) = (vals[0].clone(), vals[1].clone());
+                if name.is_empty() || url.is_empty() {
+                    tracing::warn!("Indexer needs a name and a url");
+                    return true;
+                }
+                let mut e = crate::Indexer::new(name, url);
+                e.api_key = (!vals[2].is_empty()).then_some(vals[2].clone());
+                cfg.torrent_indexers.push(e);
+                tracing::info!("Torrent indexer added");
+            }
+            Sec::Usenet => {
+                let (name, url) = (vals[0].clone(), vals[1].clone());
+                if name.is_empty() || url.is_empty() {
+                    tracing::warn!("Indexer needs a name and a url");
+                    return true;
+                }
+                let mut e = crate::Indexer::new(name, url);
+                e.api_key = (!vals[2].is_empty()).then_some(vals[2].clone());
+                cfg.usenet_indexers.push(e);
+                tracing::info!("Usenet indexer added");
+            }
+            _ => return true,
+        }
+
+        self.apply_config(cfg, &app);
+        self.cancel_add();
+        true
     }
 
     /// Returns true when the key was consumed.
     fn handle_key(&self, app: EventTarget<AppEvent>, code: KeyCode) -> bool {
+        // ── Add form ───────────────────────────────────────────────────────
         if self.adding.get() {
-            // Keep whichever field is active focused so its input receives keys.
-            let f = self.add_field.get();
-            (if f == 0 { &self.name_input } else { &self.path_input }).focus();
-            (if f == 0 { &self.path_input } else { &self.name_input }).blur();
-
+            let n = self.add_form_labels(Sec::from_index(self.section.get())).len();
+            let f = self.add_field.get().min(n - 1);
+            for (i, inp) in self.add_inputs.iter().enumerate().take(n) {
+                if i == f { inp.focus(); } else { inp.blur(); }
+            }
             match code {
                 KeyCode::Esc => self.cancel_add(),
                 KeyCode::Enter => return self.commit_add(app),
                 KeyCode::Tab | KeyCode::Up | KeyCode::Down => {
-                    self.add_field.set(1 - f);
+                    self.add_field.set((f + 1) % n);
                 }
-                _ => {
-                    (if f == 0 { &self.name_input } else { &self.path_input }).on_key(code);
-                }
+                _ => self.add_inputs[f].on_key(code),
             }
             return true;
         }
@@ -265,39 +511,30 @@ impl SettingsPanel {
                     self.editing.set(None);
                     self.editor.blur();
                 }
-                KeyCode::Enter => {
-                    return self.commit_edit(app);
-                }
+                KeyCode::Enter => return self.commit_edit(app),
                 _ => self.editor.on_key(code),
             }
             return true;
         }
 
-        // ── List navigation / actions ──────────────────────────────────────
+        // ── Section / row navigation ───────────────────────────────────────
+        let sec = Sec::from_index(self.section.get());
+        let rows = self.rows(sec);
         let sel = self.selection.get();
-        let vol_sel = sel.checked_sub(SETTINGS_FIELDS.len());
 
         match code {
-            KeyCode::Char('a') | KeyCode::Char('A') => {
-                self.name_input.set_value("");
-                self.path_input.set_value("");
-                self.add_field.set(0);
-                self.adding.set(true);
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.reset_transient();
+                let s = self.section.get();
+                self.section.set(s.saturating_sub(1));
+                self.selection.set(0);
                 true
             }
-            KeyCode::Char('d') | KeyCode::Char('D') if vol_sel.is_some() => {
-                self.delete_volume(vol_sel.unwrap(), app);
-                true
-            }
-            KeyCode::Char('m') | KeyCode::Char('M') if vol_sel.is_some() => {
-                self.begin_edit(EditTarget::VolumeMax(vol_sel.unwrap()));
-                true
-            }
-            KeyCode::Enter => {
-                match vol_sel {
-                    None => self.begin_edit(EditTarget::Field(sel)),
-                    Some(i) => self.begin_edit(EditTarget::VolumeName(i)),
-                }
+            KeyCode::Right | KeyCode::Char('l') => {
+                self.reset_transient();
+                let s = self.section.get();
+                self.section.set((s + 1).min(SECTIONS.len() - 1));
+                self.selection.set(0);
                 true
             }
             KeyCode::Up => {
@@ -305,37 +542,27 @@ impl SettingsPanel {
                 true
             }
             KeyCode::Down => {
-                self.selection.set((sel + 1).min(self.n_rows().saturating_sub(1)));
+                self.selection.set((sel + 1).min(rows.len().saturating_sub(1)));
+                true
+            }
+            KeyCode::Enter => {
+                if let Some(row) = rows.get(sel) {
+                    self.begin_edit(*row);
+                }
+                true
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') => {
+                self.start_add();
+                true
+            }
+            KeyCode::Char('d') | KeyCode::Char('D') => {
+                if let Some(row) = rows.get(sel) {
+                    self.delete_item(*row, app);
+                }
                 true
             }
             _ => false,
         }
-    }
-
-    fn cancel_add(&self) {
-        tracing::info!("Add volume cancelled");
-        self.adding.set(false);
-        self.name_input.blur();
-        self.path_input.blur();
-    }
-
-    fn commit_add(&self, app: EventTarget<AppEvent>) -> bool {
-        let name = self.name_input.value().trim().to_string();
-        let path = self.path_input.value().trim().to_string();
-        if name.is_empty() || path.is_empty() {
-            tracing::warn!("Volume needs both a name and a path");
-            return true;
-        }
-
-        let mut cfg = config().get_cloned();
-        cfg.volumes.push(crate::Volume::new(name, path, cfg.volumes.len() as u8));
-        self.apply_config(cfg, &app);
-
-        tracing::info!("Volume added");
-        self.adding.set(false);
-        self.name_input.blur();
-        self.path_input.blur();
-        true
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer, theme: &Theme) {
@@ -347,109 +574,103 @@ impl SettingsPanel {
         let fg = BobaStyle::new().fg(theme.global_fg);
         let muted = BobaStyle::new().fg(theme.palette.fg_muted.to_rgb());
 
-        accent.render("Service Config").blit(buf, area.x, area.y);
+        accent.render("Settings").blit(buf, area.x, area.y);
 
-        let glyph_w = 2u16;
-        let label_w = 16u16;
+        // ── Sidebar ────────────────────────────────────────────────────────
+        let side_w = 14u16;
+        for (i, name) in SECTION_NAMES.iter().enumerate() {
+            let y = area.y + 2 + i as u16;
+            if y >= area.bottom() {
+                break;
+            }
+            if i == self.section.get() {
+                sel_style(theme).render("▸ ").blit(buf, area.x, y);
+                accent.render(name).blit(buf, area.x + 2, y);
+            } else {
+                muted.render(name).blit(buf, area.x + 2, y);
+            }
+        }
+
+        // ── Content pane ───────────────────────────────────────────────────
+        let cx = area.x + side_w + 2;
+        if cx >= area.right() {
+            return;
+        }
+        let carea = Rect { x: cx, y: area.y + 2, width: area.right() - cx, height: area.bottom().saturating_sub(area.y + 2) };
+
+        let sec = Sec::from_index(self.section.get());
+        muted.render(&rule(0, carea.width as usize)).blit(buf, cx, area.y + 1);
+
+        let rows = self.rows(sec);
+        let sel = self.selection.get();
         let editing_target = self.editing.get();
 
-        // ── Config fields ──────────────────────────────────────────────────
-        for (i, label) in ["download dir", "soulseek user", "soulseek pass"].iter().enumerate() {
-            let y = area.y + 2 + i as u16 * 2;
-            if y >= area.bottom() {
+        // Section headers between groups.
+        let mut last_group = String::new();
+        let mut visual_y = 0u16;
+
+        for (ri, row) in rows.iter().enumerate() {
+            if area.y + 2 + visual_y >= area.bottom() {
                 break;
             }
 
-            if i == self.selection.get() && editing_target.is_none() {
-                sel_style(theme).render("▸").blit(buf, area.x, y);
+            // Group headers.
+            let group = match row {
+                Row::QbitUrl | Row::QbitUser | Row::QbitPass => "qBittorrent",
+                Row::SabUrl | Row::SabKey => "SABnzbd",
+                Row::Aria2Url | Row::Aria2Secret => "aria2",
+                _ => "",
+            };
+            if !group.is_empty() && group != last_group {
+                accent.render(group).blit(buf, carea.x, carea.y + visual_y);
+                visual_y += 1;
+                last_group = group.to_string();
             }
 
-            muted.render(label).blit(buf, area.x + glyph_w, y);
+            let y = carea.y + visual_y;
+            visual_y += 1;
 
-            if editing_target == Some(EditTarget::Field(i)) {
-                fg.render(&format!("{} ", self.editor.value())).blit(buf, area.x + glyph_w + label_w, y);
+            if ri == sel && editing_target.is_none() && !self.adding.get() {
+                sel_style(theme).render("▸").blit(buf, carea.x, y);
+            }
+
+            let (label, value, _secret) = self.row_label_value(*row);
+            let label_x = carea.x + 2;
+
+            // Inline editor takes over the value cell.
+            let shown = if editing_target == Some(*row) {
+                format!("{} ", self.editor.value())
             } else {
-                fg.render(&Self::display_value(SETTINGS_FIELDS[i])).blit(buf, area.x + glyph_w + label_w, y);
-            }
-        }
-
-        let mut y = area.y + 2 + SETTINGS_FIELDS.len() as u16 * 2;
-
-        // ── Server url (read-only) ─────────────────────────────────────────
-        if y < area.bottom() {
-            muted.render("server url").blit(buf, area.x + glyph_w, y);
-            fg.render(&format!(
-                "{} (read-only)",
-                config().get_cloned().bh_server_url.unwrap_or_else(|| "https://bldhnd.fargone.sh".into())
-            ))
-            .blit(buf, area.x + glyph_w + label_w, y);
-            y += 2;
-        }
-
-        // ── Volumes ────────────────────────────────────────────────────────
-        let volumes = config().get_cloned().volumes;
-
-        if y < area.bottom() {
-            accent.render("Volumes").blit(buf, area.x, y);
-            muted
-                .render("enter rename · m max size · d delete · a add")
-                .blit(buf, area.x + 8, y);
-            y += 1;
-        }
-
-        for (i, v) in volumes.iter().enumerate() {
-            if y >= area.bottom() {
-                break;
-            }
-            let sel_idx = SETTINGS_FIELDS.len() + i;
-
-            if sel_idx == self.selection.get() && editing_target.is_none() {
-                sel_style(theme).render("▸").blit(buf, area.x, y);
-            }
-
-            let cap = match v.max_size_gb {
-                Some(max) => format!("[cap {:.0}G]", max),
-                None => "[uncapped]".to_string(),
+                value
             };
 
-            muted.render(&format!("{:>2}.", i + 1)).blit(buf, area.x + glyph_w - 2, y);
-
-            let name_x = area.x + glyph_w + 3;
-            if editing_target == Some(EditTarget::VolumeName(i)) {
-                fg.render(&format!("{} ", self.editor.value())).blit(buf, name_x, y);
-            } else {
-                fg.render(&v.name).blit(buf, name_x, y);
+            muted.render(&label).blit(buf, label_x, y);
+            let value_x = label_x + 16;
+            if value_x < area.right() {
+                fg.render(&shown).blit(buf, value_x, y);
             }
-
-            let meta = format!("→ {} {}", v.path, cap);
-            muted.render(&meta).blit(buf, name_x + v.name.chars().count() as u16 + 1, y);
-
-            if editing_target == Some(EditTarget::VolumeMax(i)) {
-                let mx = name_x + meta.chars().count() as u16 + 2;
-                if mx < area.right() {
-                    fg.render(&format!("{} ", self.editor.value())).blit(buf, mx, y);
-                }
-            }
-
-            y += 1;
         }
 
-        // ── Add-volume form ────────────────────────────────────────────────
-        if self.adding.get() && y < area.bottom().saturating_sub(4) {
-            accent.render("add volume").blit(buf, area.x, y);
-
-            let rows: [(&str, &bobatea::components::input::Input); 2] =
-                [("name", &self.name_input), ("path", &self.path_input)];
-            for (i, (label, input)) in rows.iter().enumerate() {
-                let ry = y + 1 + i as u16 * 2;
-                if ry >= area.bottom() - 1 {
-                    break;
+        // ── Add form overlay ───────────────────────────────────────────────
+        if self.adding.get() {
+            let fy = carea.y + visual_y + 1;
+            if fy < area.bottom() - 4 {
+                accent.render("+ add").blit(buf, carea.x, fy);
+                let labels = self.add_form_labels(sec);
+                for (i, label) in labels.iter().enumerate() {
+                    let ry = fy + 1 + i as u16 * 2;
+                    if ry >= area.bottom() - 1 {
+                        break;
+                    }
+                    if self.add_field.get() == i {
+                        sel_style(theme).render("▸").blit(buf, carea.x, ry);
+                    }
+                    muted.render(label).blit(buf, carea.x + 2, ry);
+                    let vx = carea.x + 2 + 10;
+                    if vx < area.right() {
+                        fg.render(&format!("{} ", self.add_inputs[i].value())).blit(buf, vx, ry);
+                    }
                 }
-                if self.add_field.get() == i {
-                    sel_style(theme).render("▸").blit(buf, area.x, ry);
-                }
-                muted.render(label).blit(buf, area.x + glyph_w, ry);
-                fg.render(&format!("{} ", input.value())).blit(buf, area.x + glyph_w + label_w, ry);
             }
         }
     }
@@ -457,12 +678,15 @@ impl SettingsPanel {
 
 fn sel_style(theme: &Theme) -> BobaStyle { BobaStyle::new().fg(theme.palette.accent.to_rgb()) }
 
+/// Dim horizontal rule.
+fn rule(from: usize, to: usize) -> String { "─".repeat(to.saturating_sub(from + 1)) }
+
 
 fn hint_for(tab: usize) -> &'static str {
     match tab {
         1 => "tab focus · enter submit/action · esc blur · ↑/↓ navigate",
         2 => "s scan volumes",
-        3 => "↑/↓ select · enter edit/rename · m max size · d delete · a add",
+        3 => "←/→ section · ↑/↓ select · enter edit · a add · d delete",
         _ => "",
     }
 }
@@ -560,8 +784,7 @@ impl View for BldhndView {
                 KeyCode::Char(c @ '1'..='5') => {
                     active_tab2.set((c as u8 - b'1') as usize);
                     search.blur_input();
-                    settings.editing.set(None);
-                    settings.editor.blur();
+                    settings.reset_transient();
                 }
                 KeyCode::Char('s') | KeyCode::Char('S') if tab == 2 => {
                     tracing::info!("Scanning volumes…");

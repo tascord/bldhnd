@@ -59,20 +59,24 @@ async fn main() {
     ev.emit(key(crossterm::event::KeyCode::Char('!'))); // should type into input
     dump(&view, "TAB FOCUS CYCLING", 3);
 
-    // Settings editing
+    // ── Settings: General section (download dir edit) ─────────────────────
     ev.emit(key(crossterm::event::KeyCode::Esc));
     ev.emit(key(crossterm::event::KeyCode::Char('4'))); // settings tab
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    ev.emit(key(crossterm::event::KeyCode::Down)); // select soulseek user
+    dump(&view, "SETTINGS GENERAL", 3);
+    // Selection starts on the download dir row.
     ev.emit(key(crossterm::event::KeyCode::Enter)); // start edit
-    ev.emit(key(crossterm::event::KeyCode::End));
-    for ch in ['t', 'e', 's', 't'] {
+    for ch in ['/', 't', 'm', 'p', '/', 'd', 'l'] {
         ev.emit(key(crossterm::event::KeyCode::Char(ch)));
     }
     dump(&view, "SETTINGS EDITING", 3);
     ev.emit(key(crossterm::event::KeyCode::Enter)); // save
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     dump(&view, "SETTINGS SAVED", 3);
+
+    // ── Volumes section ────────────────────────────────────────────────────
+    ev.emit(key(crossterm::event::KeyCode::Right)); // General -> Volumes
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
     // Add a volume: 'a', type name, Tab, type path, Enter
     ev.emit(key(crossterm::event::KeyCode::Char('a')));
@@ -86,52 +90,65 @@ async fn main() {
     }
     dump(&view, "ADD VOLUME FORM", 3);
     ev.emit(key(crossterm::event::KeyCode::Enter)); // commit volume
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await; // let probe finish
-    dump(&view, "VOLUME SAVED (status refreshed?)", 3);
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await; // let save finish
+    dump(&view, "VOLUME ADDED", 3);
 
-    // Home should now show refreshed status
-    ev.emit(key(crossterm::event::KeyCode::Char('1')));
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    dump(&view, "HOME AFTER SAVE", 16);
-
-    // ── Volume manager ─────────────────────────────────────────────────
-    ev.emit(key(crossterm::event::KeyCode::Char('4'))); // settings
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-
-    // Selection is on field 1; Down x2 lands on the first volume.
-    // Enter opens rename, type, Enter commits.
-    for _ in 0..2 {
-        ev.emit(key(crossterm::event::KeyCode::Down));
-    }
+    // Rename volume 0: selection is on name row; Enter opens rename.
     ev.emit(key(crossterm::event::KeyCode::Enter));
     ev.emit(key(crossterm::event::KeyCode::End));
     ev.emit(key(crossterm::event::KeyCode::Char('-')));
     ev.emit(key(crossterm::event::KeyCode::Enter));
     dump(&view, "VOLUME RENAMED?", 3);
 
-    // 'm' opens max-size edit; empty value clears cap.
-    ev.emit(key(crossterm::event::KeyCode::Char('m')));
+    // Max size: Down x2 lands on max row; Enter edits, empty clears cap.
+    for _ in 0..2 {
+        ev.emit(key(crossterm::event::KeyCode::Down));
+    }
+    ev.emit(key(crossterm::event::KeyCode::Enter));
     for ch in ['1', '2'] {
         ev.emit(key(crossterm::event::KeyCode::Char(ch)));
     }
     ev.emit(key(crossterm::event::KeyCode::Enter));
     dump(&view, "VOLUME MAX SET?", 3);
 
-    // Add a second volume, then delete the first one
-    ev.emit(key(crossterm::event::KeyCode::Char('a')));
-    for ch in ['f', 'i', 'l', 'm', 's'] {
+    // ── Torrent indexers section ───────────────────────────────────────────
+    for _ in 0..2 {
+        ev.emit(key(crossterm::event::KeyCode::Right));
+    } // Volumes -> Soulseek -> Torrent
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    ev.emit(key(crossterm::event::KeyCode::Char('a'))); // add indexer form
+    for ch in ['p', 'r', 'o', 'w', 'l'] {
         ev.emit(key(crossterm::event::KeyCode::Char(ch)));
     }
     ev.emit(key(crossterm::event::KeyCode::Tab));
-    for ch in ['/', 'd', 'a', 't', 'a'] {
+    for ch in ['h', 't', 't', 'p', ':', '/', '/', 'l', 'o', 'c', 'a', 'l', ':', '9', '6', '9', '6'] {
+        ev.emit(key(crossterm::event::KeyCode::Char(ch)));
+    }
+    ev.emit(key(crossterm::event::KeyCode::Tab));
+    for ch in ['k', 'e', 'y', '1', '2', '3'] {
+        ev.emit(key(crossterm::event::KeyCode::Char(ch)));
+    }
+    dump(&view, "ADD INDEXER FORM", 3);
+    ev.emit(key(crossterm::event::KeyCode::Enter));
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    dump(&view, "INDEXER ADDED (+ qbt block)", 3);
+
+    // qBittorrent url row is right after indexer rows (index 3)
+    for _ in 0..3 {
+        ev.emit(key(crossterm::event::KeyCode::Down));
+    }
+    ev.emit(key(crossterm::event::KeyCode::Enter));
+    for ch in ['8', '0', '8', '1'] {
         ev.emit(key(crossterm::event::KeyCode::Char(ch)));
     }
     ev.emit(key(crossterm::event::KeyCode::Enter));
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    dump(&view, "TWO VOLUMES", 3);
+    dump(&view, "QBT URL SET", 3);
 
-    // Selection is on volume 1; Down selects the new volume, 'd' deletes it
-    ev.emit(key(crossterm::event::KeyCode::Down));
+    // Delete the indexer: Up x3 back to its name row, then 'd'
+    for _ in 0..3 {
+        ev.emit(key(crossterm::event::KeyCode::Up));
+    }
     ev.emit(key(crossterm::event::KeyCode::Char('d')));
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     dump(&view, "AFTER DELETE", 3);

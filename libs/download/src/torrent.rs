@@ -46,7 +46,12 @@ impl SearchBackend for TorrentSearcher {
     where
         Self: Sized,
     {
-        config.bh_server_url.as_ref().map(|url| Arc::new(Self::new(url, None)))
+        // Prefer the configured Torznab indexer; fall back to bh_server_url.
+        config
+            .torrent_indexer
+            .as_ref()
+            .map(|(url, key)| Arc::new(Self::new(url, key.clone())))
+            .or_else(|| config.bh_server_url.as_ref().map(|url| Arc::new(Self::new(url, None))))
     }
 }
 
@@ -131,8 +136,12 @@ impl DownloadBackend for TorrentDownloader {
     where
         Self: Sized,
     {
-        let url = config.bh_server_url.as_deref().unwrap_or("http://localhost:8080");
-        Some(Arc::new(Self::new(url, None)))
+        // Prefer the configured qBittorrent WebUI; fall back to bh_server_url.
+        let (url, key) = match &config.qbittorrent {
+            Some((url, _user, _pass)) => (url.clone(), None),
+            None => (config.bh_server_url.clone().unwrap_or_else(|| "http://localhost:8080".into()), None),
+        };
+        Some(Arc::new(Self::new(&url, key)))
     }
 }
 

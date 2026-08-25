@@ -49,6 +49,18 @@ pub struct Config {
     pub soulseek_username: Option<String>,
     pub soulseek_password: Option<String>,
     pub download_dir: Option<String>,
+    /// Torznab-compatible torrent indexers (Prowlarr/Jackett/NZBgeek etc).
+    #[serde(default)]
+    pub torrent_indexers: Vec<Indexer>,
+    /// NZB search indexers (Torznab or newznab-style APIs).
+    #[serde(default)]
+    pub usenet_indexers: Vec<Indexer>,
+    #[serde(default)]
+    pub qbittorrent: Option<ClientEndpoint>,
+    #[serde(default)]
+    pub sabnzbd: Option<ApiKeyEndpoint>,
+    #[serde(default)]
+    pub aria2: Option<SecretEndpoint>,
     /// Optional sections — clients (e.g. the TUI) may omit these.
     #[serde(default)]
     pub quality: QualitySettings,
@@ -56,6 +68,42 @@ pub struct Config {
     pub notifications: NotificationSettings,
     #[serde(default)]
     pub plex: Option<PlexSettings>,
+}
+
+/// A search indexer (torrent or usenet): named endpoint + optional API key.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Indexer {
+    pub name: String,
+    pub url: String,
+    pub api_key: Option<String>,
+}
+
+impl Indexer {
+    pub fn new(name: impl Into<String>, url: impl Into<String>) -> Self {
+        Self { name: name.into(), url: url.into(), api_key: None }
+    }
+}
+
+/// qBittorrent WebUI login.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ClientEndpoint {
+    pub url: String,
+    pub username: String,
+    pub password: String,
+}
+
+/// SABnzbd-style endpoint keyed by API key.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ApiKeyEndpoint {
+    pub url: String,
+    pub api_key: String,
+}
+
+/// aria2 JSON-RPC endpoint with a secret token.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SecretEndpoint {
+    pub url: String,
+    pub secret: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

@@ -152,12 +152,22 @@ pub trait SubtitleBackend: Send + Sync {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BackendConfig {
     pub soulseek_username: Option<String>,
     pub soulseek_password: Option<String>,
     pub bh_server_url: Option<String>,
     pub subtitle_api_key: Option<String>,
+    /// Torznab indexer (url, api_key) for torrent search.
+    pub torrent_indexer: Option<(String, Option<String>)>,
+    /// qBittorrent WebUI (url, username, password).
+    pub qbittorrent: Option<(String, String, String)>,
+    /// NZB indexer (url, api_key) for usenet search.
+    pub usenet_indexer: Option<(String, Option<String>)>,
+    /// SABnzbd (url, api_key).
+    pub sabnzbd: Option<(String, Option<String>)>,
+    /// aria2 JSON-RPC (url, secret).
+    pub aria2: Option<(String, Option<String>)>,
 }
 
 impl BackendConfig {

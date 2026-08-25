@@ -78,22 +78,90 @@ where
     std::thread::spawn(f).join().map_err(|_| anyhow::anyhow!("worker thread panicked"))?
 }
 
+/// Build download-backend config from user settings.
+fn backend_config_from(config: &Config) -> download::BackendConfig {
+    download::BackendConfig {
+        soulseek_username: config.soulseek_username.clone(),
+        soulseek_password: config.soulseek_password.clone(),
+        bh_server_url: config.bh_server_url.clone(),
+        subtitle_api_key: None,
+        torrent_indexer: config.torrent_indexers.first().map(|i| (i.url.clone(), i.api_key.clone())),
+        qbittorrent: config.qbittorrent.as_ref().map(|q| (q.url.clone(), q.username.clone(), q.password.clone())),
+        usenet_indexer: config.usenet_indexers.first().map(|i| (i.url.clone(), i.api_key.clone())),
+        sabnzbd: config.sabnzbd.as_ref().map(|s| (s.url.clone(), Some(s.api_key.clone()))),
+        aria2: config.aria2.as_ref().map(|a| (a.url.clone(), Some(a.secret.clone()))),
+    }
+}
+
+/// Search every configured indexer of `kind`, concatenating results.
+/// Indexers that fail are skipped (logged) so one bad endpoint doesn't kill the search.
+fn search_indexers(config: &Config, kind: &str, query: &str) -> anyhow::Result<Vec<download::SearchHit>> {
+    let indexers: Vec<&crate::config::Indexer> = match kind {
+        "torrent" => config.torrent_indexers.iter().collect(),
+        "usenet" => config.usenet_indexers.iter().collect(),
+        _ => Vec::new(),
+    };
+
+    if indexers.is_empty() {
+        anyhow::bail!("No {kind} indexers configured — add one in Settings");
+    }
+
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+    let mut all = Vec::new();
+    let mut last_err = None;
+
+    for idx in indexers {
+        let cfg = download::BackendConfig {
+            torrent_indexer: (kind == "torrent").then(|| (idx.url.clone(), idx.api_key.clone())),
+            usenet_indexer: (kind == "usenet").then(|| (idx.url.clone(), idx.api_key.clone())),
+            ..Default::default()
+        };
+        let result = rt.block_on(async {
+            let fut: std::pin::Pin<Box<dyn futures::Future<Output = anyhow::Result<Vec<download::SearchHit>>> + Send>> = match kind {
+                "torrent" => match download::torrent::TorrentSearcher::with_config(&cfg) {
+                    Some(s) => Box::pin(async move { s.search(query).await }),
+                    None => Box::pin(std::future::ready(Err(anyhow::anyhow!("indexer misconfigured")))),
+                },
+                "usenet" => match download::usenet::UsenetSearcher::with_config(&cfg) {
+                    Some(s) => Box::pin(async move { s.search(query).await }),
+                    None => Box::pin(std::future::ready(Err(anyhow::anyhow!("indexer misconfigured")))),
+                },
+                _ => Box::pin(std::future::ready(Err(anyhow::anyhow!("unknown kind")))),
+            };
+            fut.await
+        });
+        match result {
+            Ok(hits) => all.extend(hits),
+            Err(e) => {
+                warn!("Indexer '{}' failed: {e}", idx.name);
+                last_err = Some(e);
+            }
+        }
+    }
+
+    if all.is_empty() {
+        if let Some(e) = last_err {
+            return Err(e);
+        }
+    }
+    Ok(all)
+}
+
 pub fn handle_request(req: Request, tx: Sender<Response>) {    match req {
         Request::GetConfig => {
             let config = Config::load();
             let _ = tx.send(Response::GetConfig { config });
         }
         Request::UpdateConfig { config } => {
+            // The TUI owns everything user-editable; preserve service-managed
+            // sections and the server url it can't see.
             let current = Config::load();
             let updated = Config {
-                volumes: config.volumes,
                 bh_server_url: config.bh_server_url.or(current.bh_server_url),
-                soulseek_username: config.soulseek_username.or(current.soulseek_username),
-                soulseek_password: config.soulseek_password.or(current.soulseek_password),
-                download_dir: config.download_dir.or(current.download_dir),
-                quality: config.quality,
-                notifications: config.notifications,
-                plex: config.plex.or(current.plex),
+                quality: current.quality,
+                notifications: current.notifications,
+                plex: current.plex.or(config.plex),
+                ..config
             };
             if let Err(e) = updated.save() {
                 let _ = tx.send(Response::Error { message: e.to_string() });
@@ -134,41 +202,21 @@ pub fn handle_request(req: Request, tx: Sender<Response>) {    match req {
             let backend_name = backend.clone();
             let results = run_blocking(move || {
                 let config = Config::load();
-                let backend_config = download::BackendConfig {
-                    soulseek_username: config.soulseek_username.clone(),
-                    soulseek_password: config.soulseek_password.clone(),
-                    bh_server_url: config.bh_server_url.clone(),
-                    subtitle_api_key: None,
-                };
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()?;
-                rt.block_on(async {
-                    match backend_name.as_str() {
-                        "soulseek" => {
-                            if let Some(searcher) = download::slsk::SlskSearcher::with_config(&backend_config) {
-                                searcher.search(&query).await
-                            } else {
-                                Err(anyhow::anyhow!("Soulseek credentials not configured"))
-                            }
+
+                if backend_name == "soulseek" {
+                    let cfg = backend_config_from(&config);
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()?;
+                    return rt.block_on(async {
+                        match download::slsk::SlskSearcher::with_config(&cfg) {
+                            Some(searcher) => searcher.search(&query).await,
+                            None => Err(anyhow::anyhow!("Soulseek credentials not configured")),
                         }
-                        "torrent" => {
-                            if let Some(searcher) = download::torrent::TorrentSearcher::with_config(&backend_config) {
-                                searcher.search(&query).await
-                            } else {
-                                Err(anyhow::anyhow!("Indexer URL not configured"))
-                            }
-                        }
-                        "usenet" => {
-                            if let Some(searcher) = download::usenet::UsenetSearcher::with_config(&backend_config) {
-                                searcher.search(&query).await
-                            } else {
-                                Err(anyhow::anyhow!("Indexer URL not configured"))
-                            }
-                        }
-                        _ => Err(anyhow::anyhow!("Unknown backend: {}", backend_name)),
-                    }
-                })
+                    });
+                }
+
+                search_indexers(&config, &backend_name, &query)
             });
             match results {
                 Ok(results) => {
@@ -252,12 +300,7 @@ pub fn handle_request(req: Request, tx: Sender<Response>) {    match req {
                         };
 
                         let config = crate::config::Config::load();
-                        let backend_config = download::BackendConfig {
-                            soulseek_username: config.soulseek_username.clone(),
-                            soulseek_password: config.soulseek_password.clone(),
-                            bh_server_url: config.bh_server_url.clone(),
-                            subtitle_api_key: None,
-                        };
+                        let backend_config = backend_config_from(&config);
 
                         let result = match backend_str {
                             "soulseek" => {
