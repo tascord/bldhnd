@@ -1,5 +1,4 @@
 use {
-    chrono::NaiveDate,
     serde::{Deserialize, Serialize},
 };
 
@@ -17,14 +16,16 @@ pub fn search(query: &str, media_type: &str) -> anyhow::Result<Vec<SearchHit>> {
     let config = crate::config::Config::load();
     let server_url = config.bh_server_url.unwrap_or_else(|| "https://bldhnd.fargone.sh".to_string());
 
-    let client = reqwest::blocking::Client::new();
-
     match media_type {
         "Music" => {
-            let url = format!("{}/Music", server_url);
-            let resp = client.post(&url).json(&(query.to_string(), 0usize)).send()?;
-            let results: Vec<MusicResult> = resp.json()?;
-            Ok(results
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            let hits = rt.block_on(async {
+                let client = bh_server::Router::client(server_url, Default::default());
+                client.music((query.to_string(), 0usize)).await
+            })?;
+            Ok(hits
                 .into_iter()
                 .map(|r| SearchHit {
                     backend: "bh-server".to_string(),
@@ -37,10 +38,14 @@ pub fn search(query: &str, media_type: &str) -> anyhow::Result<Vec<SearchHit>> {
                 .collect())
         }
         "Movie" | "Series" => {
-            let url = format!("{}/Media", server_url);
-            let resp = client.post(&url).json(&(query.to_string(), 0usize)).send()?;
-            let results: Vec<MediaResult> = resp.json()?;
-            Ok(results
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            let hits = rt.block_on(async {
+                let client = bh_server::Router::client(server_url, Default::default());
+                client.media((query.to_string(), 0usize)).await
+            })?;
+            Ok(hits
                 .into_iter()
                 .map(|r| SearchHit {
                     backend: "bh-server".to_string(),
@@ -54,20 +59,4 @@ pub fn search(query: &str, media_type: &str) -> anyhow::Result<Vec<SearchHit>> {
         }
         _ => Ok(Vec::new()),
     }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MusicResult {
-    title: String,
-    primary_artist: String,
-    total_tracks: u32,
-    release_date: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MediaResult {
-    title: String,
-    release_date: Option<String>,
 }
