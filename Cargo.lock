@@ -1168,7 +1168,7 @@ dependencies = [
 name = "fz"
 version = "0.1.0"
 dependencies = [
- "memchr",
+ "fuzzy-matcher",
 ]
 
 [[package]]
