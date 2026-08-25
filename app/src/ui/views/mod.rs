@@ -15,6 +15,7 @@ use {
 pub mod home;
 pub mod logs;
 pub mod search;
+pub mod downloads;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppTab {
@@ -34,6 +35,7 @@ pub struct BldhndView {
     library_panel: LibraryPanel,
     settings: SettingsPanel,
     logs: logs::LogsPanel,
+    downloads: downloads::DownloadsPanel,
 }
 
 /// Live view of configured volumes + on-disk stats.
@@ -671,6 +673,7 @@ fn hint_for(tab: usize) -> &'static str {
         1 => "tab focus · enter submit/action · esc blur · ↑/↓ navigate",
         2 => "s scan volumes",
         3 => "↑/↓ section · → enter · ← back · enter edit · a add · d delete",
+        5 => "r refresh · enter/c cancel · ↑/↓ select",
         _ => "",
     }
 }
@@ -699,7 +702,8 @@ impl BldhndView {
     pub fn new() -> Self {
         let active_tab = Mutable::new(0);
 
-        let tabs = Tabs::new(["Home", "Search", "Library", "Settings", "Logs"]).active(&active_tab);
+        let tabs = Tabs::new(["Home", "Search", "Library", "Settings", "Logs", "Downloads"])
+            .active(&active_tab);
         let home = home::HomePanel::new();
         let settings = SettingsPanel::new(home.service_status.clone());
 
@@ -712,6 +716,7 @@ impl BldhndView {
             library_panel: LibraryPanel,
             settings,
             logs: logs::LogsPanel::new(),
+            downloads: downloads::DownloadsPanel::new(),
         }
     }
 }
@@ -736,6 +741,9 @@ impl View for BldhndView {
         // Search submit -> query the service in the background.
         self.search.wire_submit(app.clone());
 
+        // Downloads tab redraws after async refreshes.
+        self.downloads.wire(app.clone());
+
         // Probe service connectivity for the Home tab.
         probe_service(self.home.service_status.clone(), app.clone());
 
@@ -743,6 +751,7 @@ impl View for BldhndView {
         let app_clone = app.clone();
         let search = self.search.clone();
         let settings = self.settings.clone();
+        let downloads_panel = self.downloads.clone();
         let lib_panel_app = app.clone();
         let lib_events = fs::library().clone();
         lib_events
@@ -761,10 +770,8 @@ impl View for BldhndView {
                 KeyCode::Char('q') | KeyCode::Char('Q') if tab != 1 && !settings_typing => {
                     app_clone.emit(AppEvent::Quit);
                 }
-                _ if search_typing => search.handle_key(key.code),
-                _ if settings_typing => {
-                    settings.handle_key(app_clone.clone(), key.code);
-                }
+                // Esc toggles between the query input and results; it must be
+                // handled before the typing gate or the input swallows it.
                 KeyCode::Esc if tab == 1 => {
                     if search.input_focused() {
                         search.blur_input();
@@ -772,11 +779,19 @@ impl View for BldhndView {
                         search.focus_input();
                     }
                 }
+                _ if search_typing => search.handle_key(key.code),
+                _ if settings_typing => {
+                    settings.handle_key(app_clone.clone(), key.code);
+                }
                 KeyCode::Tab if tab == 1 => search.cycle_focus(),
-                KeyCode::Char(c @ '1'..='5') => {
-                    active_tab2.set((c as u8 - b'1') as usize);
+                KeyCode::Char(c @ '1'..='6') => {
+                    let new_tab = (c as u8 - b'1') as usize;
+                    active_tab2.set(new_tab);
                     search.blur_input();
                     settings.reset_transient();
+                    if new_tab == 5 {
+                        downloads_panel.refresh();
+                    }
                 }
                 KeyCode::Char('s') | KeyCode::Char('S') if tab == 2 => {
                     tracing::info!("Scanning volumes…");
@@ -788,6 +803,9 @@ impl View for BldhndView {
                 _ if tab == 1 => search.handle_key(key.code),
                 _ if tab == 3 => {
                     settings.handle_key(app_clone.clone(), key.code);
+                }
+                _ if tab == 5 => {
+                    downloads_panel.handle_key(key.code);
                 }
                 _ => {}
             }
@@ -812,7 +830,7 @@ impl View for BldhndView {
         // Footer hint bar
         let footer_y = area.bottom().saturating_sub(1);
         let hint = hint_for(self.active_tab.get());
-        let footer = format!("  1-5 tabs · q quit{}", if hint.is_empty() { String::new() } else { format!(" · {hint}") });
+        let footer = format!("  1-6 tabs · q quit{}", if hint.is_empty() { String::new() } else { format!(" · {hint}") });
         BobaStyle::new()
             .fg(theme.palette.fg_muted.to_rgb())
             .render(&footer)
@@ -831,6 +849,7 @@ impl View for BldhndView {
             2 => self.library_panel.render(content_area, f.buffer_mut(), theme),
             3 => self.settings.render(content_area, f.buffer_mut(), theme),
             4 => self.logs.render(content_area, f.buffer_mut(), theme),
+            5 => self.downloads.render(content_area, f.buffer_mut(), theme),
             _ => {}
         }
     }

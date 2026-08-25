@@ -101,7 +101,7 @@ impl SearchPanel {
 
     pub fn query(&self) -> String { self.input.value() }
 
-    pub fn input_focused(&self) -> bool { self.focus.get() == SearchFocus::Input }
+    pub fn input_focused(&self) -> bool { self.input.is_focused() }
 
     /// True when the currently displayed results are backend results (ready to
     /// download) as opposed to KB metadata results.
@@ -109,8 +109,23 @@ impl SearchPanel {
         self.results.lock_ref().first().map_or(false, |h| h.backend != "bh-server")
     }
 
+    /// Reconcile the focus state with whichever component actually holds
+    /// keyboard focus (mouse clicks / framework blurs can move it behind
+    /// our back).
+    fn sync_focus(&self) {
+        let f = if self.input.is_focused() {
+            SearchFocus::Input
+        } else if self.list.is_focused() {
+            SearchFocus::TypeList
+        } else {
+            SearchFocus::Results
+        };
+        self.focus.set(f);
+    }
+
     /// Cycle keyboard focus: query input → type list → results → input.
     pub fn cycle_focus(&self) {
+        self.sync_focus();
         let next = match self.focus.get() {
             SearchFocus::Input => SearchFocus::TypeList,
             SearchFocus::TypeList => SearchFocus::Results,
@@ -162,9 +177,11 @@ impl SearchPanel {
         }
         self.list.on_mouse(self.list_area.get_cloned(), ev);
         self.input.on_mouse(self.input_area.get_cloned(), ev);
+        self.sync_focus();
     }
 
     pub fn handle_key(&self, code: KeyCode) {
+        self.sync_focus();
         match self.focus.get() {
             SearchFocus::Input => self.input.on_key(code),
             SearchFocus::TypeList => match code {

@@ -167,4 +167,10 @@ async fn main() {
         ev.emit(key(crossterm::event::KeyCode::Char(ch)));
     }
     dump(&view, "SEARCH TAB", 0);
+
+    // Downloads tab (empty queue on fresh db). Esc leaves the query input first.
+    ev.emit(key(crossterm::event::KeyCode::Esc));
+    ev.emit(key(crossterm::event::KeyCode::Char('6')));
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    dump(&view, "DOWNLOADS TAB", 3);
 }

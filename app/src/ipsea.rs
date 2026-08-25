@@ -72,7 +72,7 @@ pub struct SearchHit {
     pub url: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DownloadInfo {
     pub id: u64,
     pub backend: String,
@@ -207,6 +207,14 @@ impl Client {
     pub fn get_download(&self, id: u64) -> anyhow::Result<Option<DownloadInfo>> {
         match self.send_request(Request::GetDownload { id })? {
             Response::GetDownload { download } => Ok(download),
+            Response::Error { message } => Err(anyhow::anyhow!("Error: {}", message)),
+            _ => Err(anyhow::anyhow!("Unexpected response type")),
+        }
+    }
+
+    pub fn cancel_download(&self, id: u64) -> anyhow::Result<()> {
+        match self.send_request(Request::CancelDownload { id })? {
+            Response::CancelDownload => Ok(()),
             Response::Error { message } => Err(anyhow::anyhow!("Error: {}", message)),
             _ => Err(anyhow::anyhow!("Unexpected response type")),
         }
