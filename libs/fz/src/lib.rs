@@ -30,10 +30,27 @@ pub fn fzrank(pattern: &str, candidates: &[String]) -> Vec<(usize, i32)> {
         .iter()
         .enumerate()
         .filter_map(|(i, text)| {
-            let total: i64 = tokens
-                .iter()
-                .filter_map(|tok| MATCHER.fuzzy_match(text, tok))
-                .sum();
+            // ALL tokens must match — a candidate matching only some tokens
+            // is irrelevant ("billy jean" ≠ "billy something-else").
+            let mut total: i64 = 0;
+            for tok in &tokens {
+                match MATCHER.fuzzy_match(text, tok) {
+                    Some(s) => total += s,
+                    None => {
+                        // Subsequence failed; accept close spellings via word
+                        // similarity so "billy" still finds "Billie".
+                        let best = text
+                            .split_whitespace()
+                            .map(|w| strsim::jaro_winkler(&tok.to_lowercase(), &w.to_lowercase()))
+                            .fold(0.0_f64, f64::max);
+                        if best >= 0.85 {
+                            total += (best * 60.0) as i64;
+                        } else {
+                            return None;
+                        }
+                    }
+                }
+            }
 
             if total == 0 {
                 return None;
@@ -99,6 +116,18 @@ mod tests {
         let top_ids: Vec<usize> = r.iter().take(2).map(|(i, _)| *i).collect();
         assert!(top_ids.contains(&0), "Michael Jackson - Thriller should be top-2");
         assert!(top_ids.contains(&1), "Thriller - Michael Jackson should be top-2");
+    }
+
+    #[test]
+    fn all_tokens_required() {
+        // Matching just one token is not enough.
+        let r = top("billy jean", &[
+            s("Billy Talent"),       // has "billy" only
+            s("Jean Michel Jarre"),  // has "jean" only
+            s("Billy Jean"),         // has both
+        ]);
+        assert_eq!(r.len(), 1, "only the both-tokens candidate matches, got {:?}", r);
+        assert_eq!(r[0].0, 2);
     }
 
     #[test]

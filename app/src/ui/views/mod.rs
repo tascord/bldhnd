@@ -756,14 +756,22 @@ impl View for BldhndView {
             let search_typing = tab == 1 && search.input_focused();
             let settings_typing = tab == 3 && (settings.editing() || settings.adding());
             match key.code {
-                KeyCode::Char('q') | KeyCode::Char('Q') if !search_typing && !settings_typing => {
+                // 'q' quits everywhere except search — typing a query starting
+                // with q must not kill the app.
+                KeyCode::Char('q') | KeyCode::Char('Q') if tab != 1 && !settings_typing => {
                     app_clone.emit(AppEvent::Quit);
                 }
                 _ if search_typing => search.handle_key(key.code),
                 _ if settings_typing => {
                     settings.handle_key(app_clone.clone(), key.code);
                 }
-                KeyCode::Esc if tab == 1 => search.blur_input(),
+                KeyCode::Esc if tab == 1 => {
+                    if search.input_focused() {
+                        search.blur_input();
+                    } else {
+                        search.focus_input();
+                    }
+                }
                 KeyCode::Tab if tab == 1 => search.cycle_focus(),
                 KeyCode::Char(c @ '1'..='5') => {
                     active_tab2.set((c as u8 - b'1') as usize);

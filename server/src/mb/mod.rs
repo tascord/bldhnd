@@ -54,23 +54,31 @@ impl KnowledgeBase for MusicBrainz {
         let titles: Vec<String> = entries.iter().map(|(t, _)| t.clone()).collect();
         let scored = fzrank(q, &titles);
 
-        let mut flat: Vec<(i32, String)> = Vec::new();
+        // (score, title-length, title, id) — deterministic ordering on ties.
+        let mut flat: Vec<(i32, usize, String, String)> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         for &(idx, score) in scored.iter() {
             if idx >= entries.len() {
                 continue;
             }
-            let ids = &entries[idx].1;
+            let (title, ids) = &entries[idx];
             for id in ids {
-                flat.push((score, id.clone()));
+                if seen.insert(id.clone()) {
+                    flat.push((score, title.chars().count(), title.clone(), id.clone()));
+                }
             }
         }
 
-        flat.sort_unstable_by_key(|b| std::cmp::Reverse(b.0));
+        flat.sort_unstable_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then(a.1.cmp(&b.1))
+                .then(a.2.cmp(&b.2))
+        });
 
         let offset = 50usize.saturating_mul(p);
         let mut out = Vec::new();
 
-        for (_, id) in flat.into_iter().skip(offset).take(50) {
+        for (_, _, _, id) in flat.into_iter().skip(offset).take(50) {
             if let Some(val) = releases.get(&id)? {
                 let s = val.value();
                 match serde_json::from_str::<MinifiedRelease>(&s) {

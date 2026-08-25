@@ -143,6 +143,23 @@ impl SearchPanel {
     pub fn blur_input(&self) { self.set_focus(SearchFocus::Results) }
 
     pub fn handle_mouse(&self, ev: &MouseEvent) {
+        // Clicks move keyboard focus to the clicked region.
+        if matches!(ev.kind, crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left)) {
+            let in_rect = |r: Rect| {
+                r.width > 0
+                    && ev.column >= r.x
+                    && ev.column < r.x + r.width
+                    && ev.row >= r.y
+                    && ev.row < r.y + r.height
+            };
+            if in_rect(self.input_area.get_cloned()) {
+                self.set_focus(SearchFocus::Input);
+            } else if in_rect(self.list_area.get_cloned()) {
+                self.set_focus(SearchFocus::TypeList);
+            } else {
+                self.set_focus(SearchFocus::Results);
+            }
+        }
         self.list.on_mouse(self.list_area.get_cloned(), ev);
         self.input.on_mouse(self.input_area.get_cloned(), ev);
     }
@@ -176,13 +193,17 @@ impl SearchPanel {
     }
 
     /// Enter pressed on a result: either trigger a backend search (KB result)
-    /// or queue a download (backend result).
+    /// or queue a download (backend result). With nothing selected/empty
+    /// results, Enter jumps back to the query input.
     fn fire_action(&self) {
         let idx = self.result_idx.get();
         let results = self.results.lock_ref().clone();
         let hit = match results.get(idx) {
             Some(h) => h.clone(),
-            None => return,
+            None => {
+                self.focus_input();
+                return;
+            }
         };
 
         if hit.backend == "bh-server" {
