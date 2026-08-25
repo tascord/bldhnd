@@ -113,6 +113,10 @@ pub fn score_text(pattern: &[u8], text: &[u8]) -> i32 {
         }
     }
 
+    // Penalise non-ASCII characters heavily so English/Latin titles rank above
+    // CJK / Cyrillic / etc. titles that happen to contain the same bytes.
+    let non_ascii_penalty: i32 = text.iter().filter(|&&b| b > 127).count() as i32 * 50;
+
     let complexity: i32 = if m == 1 { 1 } else { m as i32 * (m as i32 - 1) / 2 };
 
     if complexity == 0 {
@@ -122,7 +126,7 @@ pub fn score_text(pattern: &[u8], text: &[u8]) -> i32 {
     let density = (quality * 100) / complexity;
     let sparse_penalty = if n > m * 2 { 100 * m as i32 * 200 / (n as i32 + 100) } else { 100 };
 
-    (density * sparse_penalty) / 100
+    ((density * sparse_penalty) / 100) - non_ascii_penalty
 }
 
 fn word_boundaries(text: &[u8]) -> Vec<usize> {
@@ -189,5 +193,18 @@ mod tests {
     fn subsequence_in_longer_candidate() {
         let sc = scores("hl", &[s("he"), s("hexxxhl")]);
         assert!(sc[0] >= sc[1]);
+    }
+
+    #[test]
+    fn non_ascii_penalised() {
+        // "Jean-Pierre" and "Билли Jean" both have "jean" as a tight
+        // subsequence. The mixed-script title must rank lower.
+        let mut r = fzrank("jean", &[
+            s("Билли Jean"),
+            s("Jean-Pierre"),
+        ]);
+        r.sort_by(|a, b| b.1.cmp(&a.1));
+        assert_eq!(r[0].0, 1, "Jean-Pierre should rank first, got {:?}", r);
+        assert!(r[0].1 > r[1].1, "pure-ASCII should score higher");
     }
 }
