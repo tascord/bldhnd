@@ -10,6 +10,8 @@ pub struct SearchHit {
     pub year: Option<i32>,
     pub size: u64,
     pub ext: String,
+    #[serde(default)]
+    pub url: String,
 }
 
 pub fn search(query: &str, media_type: &str) -> anyhow::Result<Vec<SearchHit>> {
@@ -34,6 +36,7 @@ pub fn search(query: &str, media_type: &str) -> anyhow::Result<Vec<SearchHit>> {
                     year: r.release_date.as_ref().and_then(|s| s.split('-').next()?.parse().ok()),
                     size: (r.total_tracks as u64) * 10_000_000,
                     ext: "flac".to_string(),
+                    url: String::new(),
                 })
                 .collect())
         }
@@ -54,6 +57,7 @@ pub fn search(query: &str, media_type: &str) -> anyhow::Result<Vec<SearchHit>> {
                     year: r.release_date.as_ref().and_then(|s| s.split('-').next()?.parse().ok()),
                     size: 0,
                     ext: "".to_string(),
+                    url: String::new(),
                 })
                 .collect())
         }

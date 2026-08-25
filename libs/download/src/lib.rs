@@ -27,6 +27,9 @@ pub struct SearchHit {
     pub username: Option<String>,
     pub seeders: Option<u32>,
     pub peers: Option<u32>,
+    /// Magnet / .torrent / NZB link used to start the download.
+    #[serde(default)]
+    pub url: String,
 }
 
 impl fmt::Display for SearchHit {
@@ -160,14 +163,10 @@ pub struct BackendConfig {
     pub subtitle_api_key: Option<String>,
     /// Torznab indexer (url, api_key) for torrent search.
     pub torrent_indexer: Option<(String, Option<String>)>,
-    /// qBittorrent WebUI (url, username, password).
-    pub qbittorrent: Option<(String, String, String)>,
     /// NZB indexer (url, api_key) for usenet search.
     pub usenet_indexer: Option<(String, Option<String>)>,
     /// SABnzbd (url, api_key).
     pub sabnzbd: Option<(String, Option<String>)>,
-    /// aria2 JSON-RPC (url, secret).
-    pub aria2: Option<(String, Option<String>)>,
 }
 
 impl BackendConfig {

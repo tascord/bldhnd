@@ -74,6 +74,7 @@ impl From<SlskHit> for SearchHit {
             username: Some(username),
             seeders: None,
             peers: None,
+            url: String::new(),
         }
     }
 }

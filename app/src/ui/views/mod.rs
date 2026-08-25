@@ -98,6 +98,8 @@ impl LibraryPanel {
 #[derive(Clone)]
 struct SettingsPanel {
     section: Mutable<usize>,
+    /// True once the user has entered the section's content pane.
+    inside: Mutable<bool>,
     selection: Mutable<usize>,
     editor: bobatea::components::input::Input,
     /// What the inline editor is currently editing.
@@ -137,13 +139,8 @@ enum Row {
     SlskPass,
     /// Indexer of kind (0=torrent, 1=usenet), #idx, field 0=name 1=url 2=api-key.
     IdxField(u8, usize, usize),
-    QbitUrl,
-    QbitUser,
-    QbitPass,
     SabUrl,
     SabKey,
-    Aria2Url,
-    Aria2Secret,
 }
 
 fn mask(v: &str) -> String {
@@ -154,6 +151,7 @@ impl SettingsPanel {
     fn new(service_status: Mutable<String>) -> Self {
         Self {
             section: Mutable::new(0),
+            inside: Mutable::new(false),
             selection: Mutable::new(0),
             editor: bobatea::components::input::Input::new("value"),
             editing: Mutable::new(None),
@@ -203,14 +201,14 @@ impl SettingsPanel {
                 let mut v: Vec<Row> = (0..cfg.torrent_indexers.len())
                     .flat_map(|i| [Row::IdxField(0, i, 0), Row::IdxField(0, i, 1), Row::IdxField(0, i, 2)])
                     .collect();
-                v.extend([Row::QbitUrl, Row::QbitUser, Row::QbitPass]);
+
                 v
             }
             Sec::Usenet => {
                 let mut v: Vec<Row> = (0..cfg.usenet_indexers.len())
                     .flat_map(|i| [Row::IdxField(1, i, 0), Row::IdxField(1, i, 1), Row::IdxField(1, i, 2)])
                     .collect();
-                v.extend([Row::SabUrl, Row::SabKey, Row::Aria2Url, Row::Aria2Secret]);
+                v.extend([Row::SabUrl, Row::SabKey]);
                 v
             }
         }
@@ -249,13 +247,8 @@ impl SettingsPanel {
                     _ => ("api key".into(), e.map(|e| mask(e.api_key.as_deref().unwrap_or(""))).unwrap_or_default(), true),
                 }
             }
-            Row::QbitUrl => ("qbt url".into(), cfg.qbittorrent.as_ref().map(|q| q.url.clone()).unwrap_or_default(), false),
-            Row::QbitUser => ("qbt user".into(), cfg.qbittorrent.as_ref().map(|q| q.username.clone()).unwrap_or_default(), false),
-            Row::QbitPass => ("qbt pass".into(), cfg.qbittorrent.as_ref().map(|q| mask(&q.password)).unwrap_or_default(), true),
             Row::SabUrl => ("sab url".into(), cfg.sabnzbd.as_ref().map(|s| s.url.clone()).unwrap_or_default(), false),
             Row::SabKey => ("sab key".into(), cfg.sabnzbd.as_ref().map(|s| mask(&s.api_key)).unwrap_or_default(), true),
-            Row::Aria2Url => ("aria2 url".into(), cfg.aria2.as_ref().map(|a| a.url.clone()).unwrap_or_default(), false),
-            Row::Aria2Secret => ("aria2 secret".into(), cfg.aria2.as_ref().map(|a| mask(&a.secret)).unwrap_or_default(), true),
         }
     }
 
@@ -280,9 +273,7 @@ impl SettingsPanel {
                 let list = if kind == 0 { &cfg.torrent_indexers } else { &cfg.usenet_indexers };
                 list.get(i).and_then(|e| e.api_key.clone()).unwrap_or_default()
             }
-            Row::QbitPass => cfg.qbittorrent.map(|q| q.password).unwrap_or_default(),
             Row::SabKey => cfg.sabnzbd.map(|s| s.api_key).unwrap_or_default(),
-            Row::Aria2Secret => cfg.aria2.map(|a| a.secret).unwrap_or_default(),
             _ => String::new(),
         }
     }
@@ -315,19 +306,6 @@ impl SettingsPanel {
                     }
                 }
             }
-            Row::QbitUrl | Row::QbitUser | Row::QbitPass => {
-                let q = cfg.qbittorrent.get_or_insert_with(|| crate::ClientEndpoint {
-                    url: String::new(),
-                    username: String::new(),
-                    password: String::new(),
-                });
-                match row {
-                    Row::QbitUrl if !empty => q.url = value,
-                    Row::QbitUser if !empty => q.username = value,
-                    Row::QbitPass if !empty => q.password = value,
-                    _ => {}
-                }
-            }
             Row::SabUrl | Row::SabKey => {
                 let s = cfg.sabnzbd.get_or_insert_with(|| crate::ApiKeyEndpoint {
                     url: String::new(),
@@ -336,17 +314,6 @@ impl SettingsPanel {
                 match row {
                     Row::SabUrl if !empty => s.url = value,
                     Row::SabKey if !empty => s.api_key = value,
-                    _ => {}
-                }
-            }
-            Row::Aria2Url | Row::Aria2Secret => {
-                let a = cfg.aria2.get_or_insert_with(|| crate::SecretEndpoint {
-                    url: String::new(),
-                    secret: String::new(),
-                });
-                match row {
-                    Row::Aria2Url if !empty => a.url = value,
-                    Row::Aria2Secret if !empty => a.secret = value,
                     _ => {}
                 }
             }
@@ -518,23 +485,38 @@ impl SettingsPanel {
         }
 
         // ── Section / row navigation ───────────────────────────────────────
+        // Up/Down move between sections until the user enters one with →;
+        // ← leaves back to the section menu.
+        if !self.inside.get() {
+            return match code {
+                KeyCode::Up => {
+                    let s = self.section.get();
+                    self.section.set(s.saturating_sub(1));
+                    true
+                }
+                KeyCode::Down => {
+                    let s = self.section.get();
+                    self.section.set((s + 1).min(SECTIONS.len() - 1));
+                    true
+                }
+                KeyCode::Right | KeyCode::Enter | KeyCode::Char('l') => {
+                    self.selection.set(0);
+                    self.inside.set(true);
+                    true
+                }
+                _ => false,
+            };
+        }
+
         let sec = Sec::from_index(self.section.get());
         let rows = self.rows(sec);
         let sel = self.selection.get();
 
         match code {
             KeyCode::Left | KeyCode::Char('h') => {
-                self.reset_transient();
-                let s = self.section.get();
-                self.section.set(s.saturating_sub(1));
-                self.selection.set(0);
-                true
-            }
-            KeyCode::Right | KeyCode::Char('l') => {
-                self.reset_transient();
-                let s = self.section.get();
-                self.section.set((s + 1).min(SECTIONS.len() - 1));
-                self.selection.set(0);
+                if self.editing.get().is_none() && !self.adding.get() {
+                    self.inside.set(false);
+                }
                 true
             }
             KeyCode::Up => {
@@ -584,7 +566,11 @@ impl SettingsPanel {
                 break;
             }
             if i == self.section.get() {
-                sel_style(theme).render("▸ ").blit(buf, area.x, y);
+                if self.inside.get() {
+                    BobaStyle::new().fg(theme.palette.accent.to_rgb()).render("· ").blit(buf, area.x, y);
+                } else {
+                    sel_style(theme).render("▸ ").blit(buf, area.x, y);
+                }
                 accent.render(name).blit(buf, area.x + 2, y);
             } else {
                 muted.render(name).blit(buf, area.x + 2, y);
@@ -616,9 +602,7 @@ impl SettingsPanel {
 
             // Group headers.
             let group = match row {
-                Row::QbitUrl | Row::QbitUser | Row::QbitPass => "qBittorrent",
                 Row::SabUrl | Row::SabKey => "SABnzbd",
-                Row::Aria2Url | Row::Aria2Secret => "aria2",
                 _ => "",
             };
             if !group.is_empty() && group != last_group {
@@ -630,7 +614,7 @@ impl SettingsPanel {
             let y = carea.y + visual_y;
             visual_y += 1;
 
-            if ri == sel && editing_target.is_none() && !self.adding.get() {
+            if self.inside.get() && ri == sel && editing_target.is_none() && !self.adding.get() {
                 sel_style(theme).render("▸").blit(buf, carea.x, y);
             }
 
@@ -686,7 +670,7 @@ fn hint_for(tab: usize) -> &'static str {
     match tab {
         1 => "tab focus · enter submit/action · esc blur · ↑/↓ navigate",
         2 => "s scan volumes",
-        3 => "←/→ section · ↑/↓ select · enter edit · a add · d delete",
+        3 => "↑/↓ section · → enter · ← back · enter edit · a add · d delete",
         _ => "",
     }
 }

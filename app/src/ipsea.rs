@@ -67,6 +67,9 @@ pub struct SearchHit {
     pub year: Option<i32>,
     pub size: u64,
     pub ext: String,
+    /// Magnet / .torrent link for download-backend hits.
+    #[serde(default)]
+    pub url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

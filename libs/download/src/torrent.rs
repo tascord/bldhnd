@@ -57,6 +57,12 @@ impl SearchBackend for TorrentSearcher {
 
 impl From<TorrentResult> for SearchHit {
     fn from(r: TorrentResult) -> Self {
+        // Prefer the direct .torrent enclosure; fall back to a magnet built
+        // from the info hash (resolvable via DHT).
+        let url = match &r.torrent_link {
+            Some(link) if !link.is_empty() => link.clone(),
+            _ => r.info_hash.as_ref().map(|h| format!("magnet:?xt=urn:btih:{h}")).unwrap_or_default(),
+        };
         SearchHit {
             backend: "torrent",
             title: r.name,
@@ -74,6 +80,7 @@ impl From<TorrentResult> for SearchHit {
             username: None,
             seeders: r.seeders,
             peers: r.peers,
+            url,
         }
     }
 }
@@ -91,15 +98,16 @@ struct TorrentResult {
     info_hash: Option<String>,
 }
 
-pub struct TorrentDownloader {
-    client_api_url: String,
-    api_key: Option<String>,
-}
+/// Embedded torrent downloader — no external client required.
+///
+/// Spins up a throwaway librqbit session per download (DHT bootstraps each
+/// time; fine for one-shot fetches). Accepts magnet URIs (including ones
+/// built from bare info hashes) and http(s) .torrent links.
+#[derive(Default)]
+pub struct TorrentDownloader;
 
 impl TorrentDownloader {
-    pub fn new(client_api_url: &str, api_key: Option<String>) -> Self {
-        Self { client_api_url: client_api_url.to_string(), api_key }
-    }
+    pub fn new() -> Self { Self }
 }
 
 #[async_trait]
@@ -112,13 +120,42 @@ impl DownloadBackend for TorrentDownloader {
         dest_dir: &Path,
         progress_callback: Option<Arc<dyn Fn(DownloadProgress) + Send + Sync>>,
     ) -> anyhow::Result<PathBuf> {
-        let torrent_data = if let Some(info_hash) = &item.info_hash {
-            self.add_by_hash(info_hash, dest_dir).await?
-        } else if let Some(uri) = &item.uri {
-            self.add_by_uri(uri, dest_dir).await?
-        } else {
-            return Err(anyhow::anyhow!("No torrent info_hash or URI provided"));
+        // Resolve a usable uri: explicit magnet/.torrent link, or a magnet
+        // built from the info hash.
+        let uri = match &item.uri {
+            Some(u) if !u.is_empty() => u.clone(),
+            _ => match &item.info_hash {
+                Some(hash) if !hash.is_empty() => format!("magnet:?xt=urn:btih:{hash}"),
+                _ => return Err(anyhow::anyhow!("No torrent URI or info_hash provided")),
+            },
         };
+
+        if let Some(cb) = progress_callback.as_ref() {
+            cb(DownloadProgress {
+                bytes_done: 0,
+                total_bytes: item.size,
+                state: DownloadState::Connecting,
+                speed_bps: 0,
+            });
+        }
+
+        std::fs::create_dir_all(dest_dir)?;
+
+        let session = librqbit::Session::new(dest_dir.to_path_buf()).await?;
+        let response = session
+            .add_torrent(
+                librqbit::AddTorrent::from_url(&uri),
+                Some(librqbit::AddTorrentOptions::default()),
+            )
+            .await?;
+        let handle =
+            response.into_handle().ok_or_else(|| anyhow::anyhow!("torrent already active"))?;
+
+        handle.wait_until_completed().await.map_err(|e| anyhow::anyhow!("torrent failed: {e}"))?;
+
+        // Best-effort real content name for the completed path.
+        let name = handle.name().unwrap_or_else(|| item.filename.clone());
+        let final_path = dest_dir.join(name);
 
         if let Some(cb) = progress_callback {
             cb(DownloadProgress {
@@ -129,60 +166,6 @@ impl DownloadBackend for TorrentDownloader {
             });
         }
 
-        Ok(dest_dir.join(&item.filename))
-    }
-
-    fn with_config(config: &BackendConfig) -> Option<Arc<Self>>
-    where
-        Self: Sized,
-    {
-        // Prefer the configured qBittorrent WebUI; fall back to bh_server_url.
-        let (url, key) = match &config.qbittorrent {
-            Some((url, _user, _pass)) => (url.clone(), None),
-            None => (config.bh_server_url.clone().unwrap_or_else(|| "http://localhost:8080".into()), None),
-        };
-        Some(Arc::new(Self::new(&url, key)))
-    }
-}
-
-impl TorrentDownloader {
-    async fn add_by_hash(&self, info_hash: &str, dest_dir: &Path) -> anyhow::Result<Vec<u8>> {
-        let client = reqwest::Client::new();
-        let url = format!("{}/api/v2/torrents/add", self.client_api_url);
-
-        let savepath = dest_dir.to_string_lossy().to_string();
-        let mut params = vec![("hash", info_hash), ("savepath", savepath.as_str())];
-
-        if let Some(key) = &self.api_key {
-            params.push(("apiKey", key.as_str()));
-        }
-
-        let resp = client.post(&url).form(&params).send().await?;
-
-        if !resp.status().is_success() {
-            return Err(anyhow::anyhow!("Failed to add torrent: {}", resp.status()));
-        }
-
-        Ok(Vec::new())
-    }
-
-    async fn add_by_uri(&self, uri: &str, dest_dir: &Path) -> anyhow::Result<Vec<u8>> {
-        let client = reqwest::Client::new();
-        let url = format!("{}/api/v2/torrents/add", self.client_api_url);
-
-        let savepath = dest_dir.to_string_lossy().to_string();
-        let mut params = vec![("urls", uri), ("savepath", savepath.as_str())];
-
-        if let Some(key) = &self.api_key {
-            params.push(("apiKey", key.as_str()));
-        }
-
-        let resp = client.post(&url).form(&params).send().await?;
-
-        if !resp.status().is_success() {
-            return Err(anyhow::anyhow!("Failed to add torrent: {}", resp.status()));
-        }
-
-        Ok(Vec::new())
+        Ok(final_path)
     }
 }

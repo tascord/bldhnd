@@ -7,6 +7,7 @@ edition = "2024"
 anyhow = "1.0"
 async-trait = "0.1"
 futures = "0.3"
+librqbit = "9"
 reqwest = { version = "0.13", features = ["json", "stream", "blocking", "multipart", "form"] }
 urlencoding = "2.1"
 serde = { version = "1.0", features = ["derive"] }

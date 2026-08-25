@@ -51,10 +51,11 @@ async fn main() {
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     dump(&view, "CLICK EMPTY BAR (should stay on Search)", 1);
 
-    // Tab cycles focus input <-> list
+    // Tab cycles focus input -> list -> results -> input
     ev.emit(key(crossterm::event::KeyCode::Enter)); // focus input
     ev.emit(key(crossterm::event::KeyCode::Char('m')));
     ev.emit(key(crossterm::event::KeyCode::Tab)); // -> list
+    ev.emit(key(crossterm::event::KeyCode::Tab)); // -> results
     ev.emit(key(crossterm::event::KeyCode::Tab)); // -> input
     ev.emit(key(crossterm::event::KeyCode::Char('!'))); // should type into input
     dump(&view, "TAB FOCUS CYCLING", 3);
@@ -64,6 +65,8 @@ async fn main() {
     ev.emit(key(crossterm::event::KeyCode::Char('4'))); // settings tab
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     dump(&view, "SETTINGS GENERAL", 3);
+    ev.emit(key(crossterm::event::KeyCode::Right)); // enter General section
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     // Selection starts on the download dir row.
     ev.emit(key(crossterm::event::KeyCode::Enter)); // start edit
     for ch in ['/', 't', 'm', 'p', '/', 'd', 'l'] {
@@ -75,7 +78,9 @@ async fn main() {
     dump(&view, "SETTINGS SAVED", 3);
 
     // ── Volumes section ────────────────────────────────────────────────────
-    ev.emit(key(crossterm::event::KeyCode::Right)); // General -> Volumes
+    ev.emit(key(crossterm::event::KeyCode::Left)); // back to section menu
+    ev.emit(key(crossterm::event::KeyCode::Down)); // -> Volumes
+    ev.emit(key(crossterm::event::KeyCode::Right)); // enter Volumes
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
     // Add a volume: 'a', type name, Tab, type path, Enter
@@ -112,9 +117,10 @@ async fn main() {
     dump(&view, "VOLUME MAX SET?", 3);
 
     // ── Torrent indexers section ───────────────────────────────────────────
-    for _ in 0..2 {
-        ev.emit(key(crossterm::event::KeyCode::Right));
-    } // Volumes -> Soulseek -> Torrent
+    ev.emit(key(crossterm::event::KeyCode::Left)); // back to menu
+    ev.emit(key(crossterm::event::KeyCode::Down)); // -> Soulseek
+    ev.emit(key(crossterm::event::KeyCode::Down)); // -> Torrent
+    ev.emit(key(crossterm::event::KeyCode::Right)); // enter Torrent
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     ev.emit(key(crossterm::event::KeyCode::Char('a'))); // add indexer form
     for ch in ['p', 'r', 'o', 'w', 'l'] {

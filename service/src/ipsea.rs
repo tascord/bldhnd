@@ -86,10 +86,8 @@ fn backend_config_from(config: &Config) -> download::BackendConfig {
         bh_server_url: config.bh_server_url.clone(),
         subtitle_api_key: None,
         torrent_indexer: config.torrent_indexers.first().map(|i| (i.url.clone(), i.api_key.clone())),
-        qbittorrent: config.qbittorrent.as_ref().map(|q| (q.url.clone(), q.username.clone(), q.password.clone())),
         usenet_indexer: config.usenet_indexers.first().map(|i| (i.url.clone(), i.api_key.clone())),
         sabnzbd: config.sabnzbd.as_ref().map(|s| (s.url.clone(), Some(s.api_key.clone()))),
-        aria2: config.aria2.as_ref().map(|a| (a.url.clone(), Some(a.secret.clone()))),
     }
 }
 
@@ -229,6 +227,7 @@ pub fn handle_request(req: Request, tx: Sender<Response>) {    match req {
                             year: None,
                             size: r.size,
                             ext: r.ext,
+                            url: r.url,
                         })
                         .collect();
                     let _ = tx.send(Response::Search { results: hits });
@@ -315,7 +314,7 @@ pub fn handle_request(req: Request, tx: Sender<Response>) {    match req {
                                 {
                                     downloader.download(&lib_item, &download_dir, None).await
                                 } else {
-                                    Err(anyhow::anyhow!("qBittorrent URL not configured"))
+                                    Err(anyhow::anyhow!("No torrent URI — search results missing a magnet link"))
                                 }
                             }
                             "usenet" => {

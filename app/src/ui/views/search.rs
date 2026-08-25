@@ -56,6 +56,14 @@ pub enum SearchStatus {
     Failed { message: String },
 }
 
+/// Keyboard focus within the search tab. Tab cycles Input → TypeList → Results.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchFocus {
+    Input,
+    TypeList,
+    Results,
+}
+
 #[derive(Clone)]
 pub struct SearchPanel {
     input: Input,
@@ -64,6 +72,7 @@ pub struct SearchPanel {
     pub status: Mutable<SearchStatus>,
     /// Index of the currently highlighted result (-1 = none).
     pub result_idx: Mutable<usize>,
+    focus: Mutable<SearchFocus>,
     /// True while a backend search (soulseek/torrent/usenet) is in flight.
     searching_backend: Mutable<bool>,
     /// Media type captured at KB-search time, reused for downloads.
@@ -80,6 +89,7 @@ impl SearchPanel {
             results: Mutable::new(Vec::new()),
             status: Mutable::new(SearchStatus::Idle),
             result_idx: Mutable::new(0),
+            focus: Mutable::new(SearchFocus::Results),
             searching_backend: Mutable::new(false),
             media_type_buf: Mutable::new("Music".to_string()),
             input_area: Mutable::new(Rect::default()),
@@ -91,7 +101,7 @@ impl SearchPanel {
 
     pub fn query(&self) -> String { self.input.value() }
 
-    pub fn input_focused(&self) -> bool { self.input.is_focused() }
+    pub fn input_focused(&self) -> bool { self.focus.get() == SearchFocus::Input }
 
     /// True when the currently displayed results are backend results (ready to
     /// download) as opposed to KB metadata results.
@@ -99,26 +109,38 @@ impl SearchPanel {
         self.results.lock_ref().first().map_or(false, |h| h.backend != "bh-server")
     }
 
-    /// Swap keyboard focus between the query input and the type list.
+    /// Cycle keyboard focus: query input → type list → results → input.
     pub fn cycle_focus(&self) {
-        if self.input.is_focused() {
-            self.input.blur();
-            self.list.focus();
-        } else {
-            self.list.blur();
-            self.input.focus();
+        let next = match self.focus.get() {
+            SearchFocus::Input => SearchFocus::TypeList,
+            SearchFocus::TypeList => SearchFocus::Results,
+            SearchFocus::Results => SearchFocus::Input,
+        };
+        self.set_focus(next);
+    }
+
+    fn set_focus(&self, f: SearchFocus) {
+        match f {
+            SearchFocus::Input => {
+                self.list.blur();
+                self.input.focus();
+            }
+            SearchFocus::TypeList => {
+                self.input.blur();
+                self.list.focus();
+            }
+            SearchFocus::Results => {
+                self.input.blur();
+                self.list.blur();
+            }
         }
+        self.focus.set(f);
     }
 
-    pub fn focus_input(&self) {
-        self.list.blur();
-        self.input.focus();
-    }
+    pub fn focus_input(&self) { self.set_focus(SearchFocus::Input) }
 
-    pub fn blur_input(&self) {
-        self.input.blur();
-        self.list.blur();
-    }
+    /// Leave any text-entry state; focus falls back to the results list.
+    pub fn blur_input(&self) { self.set_focus(SearchFocus::Results) }
 
     pub fn handle_mouse(&self, ev: &MouseEvent) {
         self.list.on_mouse(self.list_area.get_cloned(), ev);
@@ -126,29 +148,30 @@ impl SearchPanel {
     }
 
     pub fn handle_key(&self, code: KeyCode) {
-        match code {
-            KeyCode::Up if !self.input.is_focused() => {
-                let mut idx = self.result_idx.get();
-                if idx > 0 {
-                    idx -= 1;
-                    self.result_idx.set(idx);
+        match self.focus.get() {
+            SearchFocus::Input => self.input.on_key(code),
+            SearchFocus::TypeList => match code {
+                KeyCode::Up | KeyCode::Left => self.list.move_selection(-1),
+                KeyCode::Down | KeyCode::Right => self.list.move_selection(1),
+                _ => {}
+            },
+            SearchFocus::Results => match code {
+                KeyCode::Up => {
+                    let idx = self.result_idx.get();
+                    if idx > 0 {
+                        self.result_idx.set(idx - 1);
+                    }
                 }
-            }
-            KeyCode::Down if !self.input.is_focused() => {
-                let mut idx = self.result_idx.get();
-                let total = self.results.lock_ref().len();
-                if total > 0 && idx + 1 < total {
-                    idx += 1;
-                    self.result_idx.set(idx);
+                KeyCode::Down => {
+                    let idx = self.result_idx.get();
+                    let total = self.results.lock_ref().len();
+                    if total > 0 && idx + 1 < total {
+                        self.result_idx.set(idx + 1);
+                    }
                 }
-            }
-            KeyCode::Enter if !self.input.is_focused() => {
-                self.fire_action();
-            }
-            _ => {}
-        }
-        if self.input.is_focused() {
-            self.input.on_key(code);
+                KeyCode::Enter => self.fire_action(),
+                _ => {}
+            },
         }
     }
 
@@ -222,8 +245,8 @@ impl SearchPanel {
                 crate::ipsea::Client::connect().start_download(
                     &hit.backend,
                     &hit.title,
-                    &hit.title, // filename = title for soulseek/torrent
-                    "",         // url (soulseek doesn't use urls)
+                    &hit.title,      // filename = title for soulseek/torrent
+                    &hit.url,        // magnet/.torrent link (torrent hits)
                     hit.size,
                     hit.year.map(|y| y as u32),
                     &media_type,
@@ -256,6 +279,7 @@ impl SearchPanel {
         let list = self.list.clone();
         let result_idx = self.result_idx.clone();
         let media_type_buf = self.media_type_buf.clone();
+        let panel = self.clone();
 
         self.input.clone().on(SubscriptionPriority::Low, move |ev| {
             if let bobatea::components::input::InputEvent::Submit(q) = &**ev {
@@ -267,6 +291,9 @@ impl SearchPanel {
                 media_type_buf.set(media_type.clone());
                 status.set(SearchStatus::Searching { since: Instant::now() });
                 result_idx.set(0);
+                // Move focus to the results pane so Enter/arrows act on hits
+                // instead of re-submitting the query.
+                panel.set_focus(SearchFocus::Results);
                 tracing::info!("Searching {media_type} for '{q}'…");
 
                 let (status, results, app) = (status.clone(), results.clone(), app.clone());

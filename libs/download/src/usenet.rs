@@ -75,6 +75,7 @@ impl From<UsenetResult> for SearchHit {
             username: None,
             seeders: None,
             peers: None,
+            url: String::new(),
         }
     }
 }

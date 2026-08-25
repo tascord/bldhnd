@@ -25,11 +25,7 @@ pub struct Config {
     #[serde(default)]
     pub usenet_indexers: Vec<Indexer>,
     #[serde(default)]
-    pub qbittorrent: Option<ClientEndpoint>,
-    #[serde(default)]
     pub sabnzbd: Option<ApiKeyEndpoint>,
-    #[serde(default)]
-    pub aria2: Option<SecretEndpoint>,
 }
 
 impl Config {
@@ -75,13 +71,6 @@ impl Indexer {
     }
 }
 
-/// qBittorrent WebUI login.
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ClientEndpoint {
-    pub url: String,
-    pub username: String,
-    pub password: String,
-}
 
 /// SABnzbd-style endpoint keyed by API key.
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -90,9 +79,3 @@ pub struct ApiKeyEndpoint {
     pub api_key: String,
 }
 
-/// aria2 JSON-RPC endpoint with a secret token.
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct SecretEndpoint {
-    pub url: String,
-    pub secret: String,
-}
