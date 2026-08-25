@@ -460,7 +460,7 @@ fn sel_style(theme: &Theme) -> BobaStyle { BobaStyle::new().fg(theme.palette.acc
 
 fn hint_for(tab: usize) -> &'static str {
     match tab {
-        1 => "tab swap focus · enter focus/submit · esc blur · ↑/↓ type",
+        1 => "tab focus · enter submit/action · esc blur · ↑/↓ navigate",
         2 => "s scan volumes",
         3 => "↑/↓ select · enter edit/rename · m max size · d delete · a add",
         _ => "",
@@ -567,7 +567,9 @@ impl View for BldhndView {
                     tracing::info!("Scanning volumes…");
                     fs::library().scan();
                 }
-                KeyCode::Enter if tab == 1 && !search.input_focused() => search.focus_input(),
+                KeyCode::Enter if tab == 1 && !search.input_focused() => {
+                    search.handle_key(KeyCode::Enter);
+                }
                 _ if tab == 1 => search.handle_key(key.code),
                 _ if tab == 3 => {
                     settings.handle_key(app_clone.clone(), key.code);

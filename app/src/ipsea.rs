@@ -18,7 +18,10 @@ pub enum Request {
     CommitConfig,
     Search {
         query: String,
+        #[serde(default)]
         media_type: String,
+        #[serde(default)]
+        backend: String,
     },
     ListDownloads,
     GetDownload {
@@ -160,7 +163,30 @@ impl Client {
     }
 
     pub fn search(&self, query: &str, media_type: &str) -> anyhow::Result<Vec<SearchHit>> {
-        match self.send_request(Request::Search { query: query.to_string(), media_type: media_type.to_string() })? {
+        match self.send_request(Request::Search {
+            query: query.to_string(),
+            media_type: media_type.to_string(),
+            backend: String::new(),
+        })? {
+            Response::Search { results } => Ok(results),
+            Response::Error { message } => Err(anyhow::anyhow!("Error: {}", message)),
+            _ => Err(anyhow::anyhow!("Unexpected response type")),
+        }
+    }
+
+    /// Search a download backend (soulseek/torrent/usenet) by media type.
+    /// The service maps the media_type to the appropriate backend.
+    pub fn search_backend(&self, query: &str, media_type: &str) -> anyhow::Result<Vec<SearchHit>> {
+        let backend = match media_type {
+            "Music" => "soulseek",
+            "Movie" | "Series" | "TvShow" => "torrent",
+            _ => "soulseek",
+        };
+        match self.send_request(Request::Search {
+            query: query.to_string(),
+            media_type: String::new(),
+            backend: backend.to_string(),
+        })? {
             Response::Search { results } => Ok(results),
             Response::Error { message } => Err(anyhow::anyhow!("Error: {}", message)),
             _ => Err(anyhow::anyhow!("Unexpected response type")),
