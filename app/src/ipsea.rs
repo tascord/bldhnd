@@ -39,6 +39,9 @@ pub enum Request {
     DownloadProgress {
         id: u64,
     },
+    RetryDownload {
+        id: u64,
+    },
     CancelDownload {
         id: u64,
     },
@@ -55,6 +58,7 @@ pub enum Response {
     GetDownload { download: Option<DownloadInfo> },
     StartDownload { id: u64 },
     DownloadProgress { progress: ProgressInfo },
+    RetryDownload,
     CancelDownload,
     Error { message: String },
 }
@@ -226,6 +230,14 @@ impl Client {
     pub fn cancel_download(&self, id: u64) -> anyhow::Result<()> {
         match self.send_request(Request::CancelDownload { id })? {
             Response::CancelDownload => Ok(()),
+            Response::Error { message } => Err(anyhow::anyhow!("Error: {}", message)),
+            _ => Err(anyhow::anyhow!("Unexpected response type")),
+        }
+    }
+
+    pub fn retry_download(&self, id: u64) -> anyhow::Result<()> {
+        match self.send_request(Request::RetryDownload { id })? {
+            Response::RetryDownload => Ok(()),
             Response::Error { message } => Err(anyhow::anyhow!("Error: {}", message)),
             _ => Err(anyhow::anyhow!("Unexpected response type")),
         }

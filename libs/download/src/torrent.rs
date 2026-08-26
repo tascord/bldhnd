@@ -146,7 +146,12 @@ impl DownloadBackend for TorrentDownloader {
         let response = session
             .add_torrent(
                 librqbit::AddTorrent::from_url(&uri),
-                Some(librqbit::AddTorrentOptions::default()),
+                Some(librqbit::AddTorrentOptions {
+                    // Write on top of existing files so resumed/retried
+                    // downloads continue instead of erroring out.
+                    overwrite: true,
+                    ..Default::default()
+                }),
             )
             .await?;
         let handle =

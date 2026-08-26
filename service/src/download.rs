@@ -161,6 +161,16 @@ pub enum MediaType {
     TvShow,
 }
 
+impl std::fmt::Display for MediaType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MediaType::Music => write!(f, "Music"),
+            MediaType::Movie => write!(f, "Movie"),
+            MediaType::TvShow => write!(f, "TvShow"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Download {
     pub id: u64,
@@ -173,6 +183,12 @@ pub struct Download {
     pub media_type: MediaType,
     pub state: DownloadState,
     pub created_at: i64,
+    /// Magnet / .torrent / NZB link — needed to re-drive the download after
+    /// a service restart or explicit retry.
+    #[serde(default)]
+    pub uri: Option<String>,
+    #[serde(default)]
+    pub info_hash: Option<String>,
 }
 
 pub struct DownloadManager {
@@ -182,7 +198,7 @@ pub struct DownloadManager {
 
 impl DownloadManager {
     pub fn new() -> Self {
-        let next_id = Self::load_max_id().unwrap_or(1);
+        let next_id = Self::load_max_id().map(|max| max + 1).unwrap_or(1);
         DownloadManager {
             next_id: std::sync::atomic::AtomicU64::new(next_id),
             active_downloads: std::sync::Mutex::new(Vec::new()),
@@ -217,6 +233,8 @@ impl DownloadManager {
                 media_type: item.media_type,
                 state: DownloadState::Queued,
                 created_at: chrono::Utc::now().timestamp(),
+                uri: (!item.url.is_empty()).then_some(item.url),
+                info_hash: item.info_hash,
             };
             let json = serde_json::to_string(&download)?;
             table.insert(id, json.as_str())?;
@@ -250,14 +268,10 @@ impl DownloadManager {
         let table = tx.open_table(DOWNLOADS_TABLE)?;
 
         let mut downloads = Vec::new();
-        let start = table.first()?.map(|(k, _)| k.value()).unwrap_or(0);
-        let end = table.last()?.map(|(k, _)| k.value()).unwrap_or(u64::MAX);
-
-        for i in start..=end {
-            if let Ok(Some(value)) = table.get(i) {
-                if let Ok(d) = serde_json::from_str::<Download>(value.value()) {
-                    downloads.push(d);
-                }
+        for row in table.iter()? {
+            let (_, value) = row?;
+            if let Ok(d) = serde_json::from_str::<Download>(value.value()) {
+                downloads.push(d);
             }
         }
         Ok(downloads)
@@ -306,6 +320,14 @@ impl DownloadManager {
     pub fn mark_complete(&self, id: u64) {
         let mut active = self.active_downloads.lock().unwrap();
         active.retain(|&i| i != id);
+    }
+
+    /// Mark a download as in-flight again (used by retry and startup resume).
+    pub fn mark_active(&self, id: u64) {
+        let mut active = self.active_downloads.lock().unwrap();
+        if !active.contains(&id) {
+            active.push(id);
+        }
     }
 
     pub fn save_partial(

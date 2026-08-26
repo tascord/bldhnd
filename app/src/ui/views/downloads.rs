@@ -77,21 +77,9 @@ impl DownloadsPanel {
 
     /// Fetch the current queue from the service.
     pub fn refresh(&self) {
-        let items = self.items.clone();
         let status = self.status.clone();
-        let panel = self.clone();
         status.set("refreshing…".into());
-        tokio::spawn(async move {
-            match tokio::task::spawn_blocking(|| crate::ipsea::Client::connect().list_downloads()).await {
-                Ok(Ok(list)) => {
-                    status.set(String::new());
-                    items.set(list);
-                }
-                Ok(Err(e)) => status.set(format!("error: {e}")),
-                Err(e) => status.set(format!("error: {e}")),
-            }
-            panel.frame();
-        });
+        self.refresh_async();
     }
 
     fn cancel(&self, idx: usize) -> bool {
@@ -107,11 +95,7 @@ impl DownloadsPanel {
             match tokio::task::spawn_blocking(move || crate::ipsea::Client::connect().cancel_download(id)).await {
                 Ok(Ok(())) => {
                     panel.status.set(format!("cancelled #{id}"));
-                    if let Ok(Ok(list)) =
-                        tokio::task::spawn_blocking(|| crate::ipsea::Client::connect().list_downloads()).await
-                    {
-                        panel.items.set(list);
-                    }
+                    panel.refresh_async().await;
                 }
                 Ok(Err(e)) => panel.status.set(format!("error: {e}")),
                 Err(e) => panel.status.set(format!("error: {e}")),
@@ -119,6 +103,47 @@ impl DownloadsPanel {
             panel.frame();
         });
         true
+    }
+
+    /// Re-drive a failed/cancelled download.
+    fn retry(&self, idx: usize) -> bool {
+        let Some(d) = self.items.lock_ref().get(idx).cloned() else { return false };
+        if !matches!(d.state.as_str(), "failed" | "cancelled") {
+            return false;
+        }
+        let panel = self.clone();
+        tracing::info!("Retrying download {} ({})", d.id, d.title);
+        tokio::spawn(async move {
+            let id = d.id;
+            match tokio::task::spawn_blocking(move || crate::ipsea::Client::connect().retry_download(id)).await {
+                Ok(Ok(())) => {
+                    panel.status.set(format!("retrying #{id}"));
+                    panel.refresh_async().await;
+                }
+                Ok(Err(e)) => panel.status.set(format!("error: {e}")),
+                Err(e) => panel.status.set(format!("error: {e}")),
+            }
+            panel.frame();
+        });
+        true
+    }
+
+    /// Fetch the queue from the service; awaitable so actions can chain it.
+    fn refresh_async(&self) -> tokio::task::JoinHandle<()> {
+        let items = self.items.clone();
+        let status = self.status.clone();
+        let panel = self.clone();
+        tokio::spawn(async move {
+            match tokio::task::spawn_blocking(|| crate::ipsea::Client::connect().list_downloads()).await {
+                Ok(Ok(list)) => {
+                    status.set(String::new());
+                    items.set(list);
+                }
+                Ok(Err(e)) => status.set(format!("error: {e}")),
+                Err(e) => status.set(format!("error: {e}")),
+            }
+            panel.frame();
+        })
     }
 
     /// Returns true when the key was consumed.
@@ -138,7 +163,14 @@ impl DownloadsPanel {
                 self.refresh();
                 true
             }
-            KeyCode::Enter | KeyCode::Char('c') | KeyCode::Char('C') => self.cancel(sel),
+            KeyCode::Enter | KeyCode::Char('c') | KeyCode::Char('C') => {
+                // Contextual: failed/cancelled rows retry, active rows cancel.
+                let state = self.items.lock_ref().get(sel).map(|d| d.state.clone()).unwrap_or_default();
+                match state.as_str() {
+                    "failed" | "cancelled" => self.retry(sel),
+                    _ => self.cancel(sel),
+                }
+            }
             _ => false,
         }
     }

@@ -75,6 +75,9 @@ fn main() -> anyhow::Result<()> {
     users::init();
     download::init();
 
+    // Pick up downloads that were in flight when we last shut down.
+    ipsea::resume_pending();
+
     // The ipsea IPC layer binds sockets at /tmp/{name}.sock, so both this
     // service and the TUI (app/src/ipsea.rs) must agree on that exact path.
     let socket_path = std::path::PathBuf::from("/tmp/bldhnd.sock");

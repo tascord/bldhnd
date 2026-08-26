@@ -63,6 +63,10 @@ pub enum Request {
     DownloadProgress {
         id: u64,
     },
+    /// Re-drive a failed/cancelled download with its stored parameters.
+    RetryDownload {
+        id: u64,
+    },
     CancelDownload {
         id: u64,
     },
@@ -78,6 +82,7 @@ pub enum Response {
     ListDownloads { downloads: Vec<Download> },
     GetDownload { download: Option<Download> },
     StartDownload { id: u64 },
+    RetryDownload,
     DownloadProgress { progress: Progress },
     CancelDownload,
     Error { message: String },
@@ -159,6 +164,57 @@ fn search_indexers(config: &Config, kind: &str, query: &str) -> anyhow::Result<V
         }
     }
     Ok(all)
+}
+
+/// (Re)drive one persisted download through its backend on a dedicated
+/// runtime thread. Used by StartDownload, retry, and startup resume.
+fn launch_download(d: &crate::download::Download) {
+    // Clone everything the job thread needs up front.
+    let (backend, title, filename, uri, size, info_hash, media_type_str) = (
+        d.backend.clone(),
+        d.title.clone(),
+        d.filename.clone(),
+        d.uri.clone().unwrap_or_default(),
+        d.size,
+        d.info_hash.clone(),
+        d.media_type.to_string(),
+    );
+    let id = d.id;
+    // ipsea handlers run without a tokio reactor — Handle::current() would
+    // panic here and silently kill the download before it starts. Drive the
+    // async work on a dedicated thread with its own runtime instead.
+    std::thread::spawn(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    warn!("download runtime failed: {e}");
+                    let _ = DownloadManager::new().update_state(id, crate::download::DownloadState::Failed);
+                    return;
+                }
+            };
+            rt.block_on(download_job(
+                id,
+                backend,
+                title,
+                filename,
+                uri,
+                size,
+                info_hash,
+                media_type_str,
+                crate::download::download_dir(),
+            ));
+        }));
+        if let Err(panic) = result {
+            let msg = panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_else(|| "unknown panic".into());
+            error!("download job {id} panicked: {msg}");
+            let _ = DownloadManager::new().update_state(id, crate::download::DownloadState::Failed);
+        }
+    });
 }
 
 pub fn handle_request(req: Request, tx: Sender<Response>) {    match req {
@@ -276,7 +332,6 @@ pub fn handle_request(req: Request, tx: Sender<Response>) {    match req {
             }
         }
         Request::StartDownload { backend, title, filename, url, size, year, media_type, info_hash } => {
-            let media_type_str = media_type.clone();
             let media_type = match media_type.as_str() {
                 "Music" => MediaType::Music,
                 "Movie" => MediaType::Movie,
@@ -284,48 +339,30 @@ pub fn handle_request(req: Request, tx: Sender<Response>) {    match req {
                 _ => MediaType::Music,
             };
             let item = DownloadItem {
-                backend: backend.clone(),
-                title: title.clone(),
-                filename: filename.clone(),
-                url: url.clone(),
+                backend,
+                title,
+                filename,
+                url,
                 size,
                 year,
                 media_type,
-                info_hash: info_hash.clone(),
+                info_hash,
             };
             let manager = DownloadManager::new();
             match manager.create_download(item) {
-                Ok(id) => {
-                    let download_dir = crate::download::download_dir();
-
-                    // ipsea handlers run without a tokio reactor —
-                    // Handle::current() would panic here and silently kill the
-                    // download before it starts. Drive the async work on a
-                    // dedicated thread with its own runtime instead.
-                    std::thread::spawn(move || {
-                        let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
-                            Ok(rt) => rt,
-                            Err(e) => {
-                                warn!("download runtime failed: {e}");
-                                let _ = DownloadManager::new().update_state(id, crate::download::DownloadState::Failed);
-                                return;
-                            }
-                        };
-                        rt.block_on(download_job(
-                            id,
-                            backend,
-                            title,
-                            filename,
-                            url,
-                            size,
-                            info_hash,
-                            media_type_str,
-                            download_dir,
-                        ));
-                    });
-
-                    let _ = tx.send(Response::StartDownload { id });
-                }
+                Ok(id) => match manager.get_download(id) {
+                    Ok(Some(d)) => {
+                        manager.mark_active(id);
+                        launch_download(&d);
+                        let _ = tx.send(Response::StartDownload { id });
+                    }
+                    Ok(None) => {
+                        let _ = tx.send(Response::Error { message: "download row vanished".into() });
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Response::Error { message: e.to_string() });
+                    }
+                },
                 Err(e) => {
                     let _ = tx.send(Response::Error { message: e.to_string() });
                 }
@@ -354,6 +391,36 @@ pub fn handle_request(req: Request, tx: Sender<Response>) {    match req {
                 }
             });
             let _ = tx.send(Response::DownloadProgress { progress });
+        }
+        Request::RetryDownload { id } => {
+            let manager = DownloadManager::new();
+            let terminal = |s: &crate::download::DownloadState| {
+                matches!(s, crate::download::DownloadState::Failed | crate::download::DownloadState::Cancelled)
+            };
+            match manager.get_download(id) {
+                Ok(Some(d)) if terminal(&d.state) => {
+                    match manager.update_state(id, crate::download::DownloadState::Queued) {
+                        Ok(()) => {
+                            manager.mark_active(id);
+                            launch_download(&d);
+                            info!("Retrying download {} ({})", id, d.title);
+                            let _ = tx.send(Response::RetryDownload);
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Response::Error { message: e.to_string() });
+                        }
+                    }
+                }
+                Ok(Some(_)) => {
+                    let _ = tx.send(Response::Error { message: "only failed or cancelled downloads can be retried".into() });
+                }
+                Ok(None) => {
+                    let _ = tx.send(Response::Error { message: format!("no download with id {id}") });
+                }
+                Err(e) => {
+                    let _ = tx.send(Response::Error { message: e.to_string() });
+                }
+            }
         }
         Request::CancelDownload { id } => {
             LIVE_PROGRESS.lock().unwrap().remove(&id);
@@ -452,6 +519,7 @@ async fn download_job(
             let mgr = DownloadManager::new();
             if let Err(e) = mgr.update_state(id, crate::download::DownloadState::Failed) { error!("update_state failed: {e:#}"); }
             mgr.mark_complete(id);
+            LIVE_PROGRESS.lock().unwrap().remove(&id);
             warn!("Download failed: {} - {}", id, e);
 
             let cfg = Config::load();
@@ -466,6 +534,35 @@ async fn download_job(
                 let _ = notifier.send(&notif).await;
             }
         }
+    }
+}
+
+/// Re-drive downloads that were still in flight when the service last shut
+/// down. Called once at boot, after the DB is initialised.
+pub fn resume_pending() {
+    info!("resume_pending: scanning for in-flight downloads");
+    let manager = DownloadManager::new();
+    let Ok(pending) = manager.list_downloads() else { return };
+    info!("resume_pending: {} row(s) found", pending.len());
+    let mut resumed = 0usize;
+    for d in pending {
+        if matches!(
+            d.state,
+            crate::download::DownloadState::Queued
+                | crate::download::DownloadState::Connecting
+                | crate::download::DownloadState::Downloading
+        ) {
+            // Reset to a clean queued state before relaunching.
+            if manager.update_state(d.id, crate::download::DownloadState::Queued).is_ok() {
+                info!("Resuming download {} ({})", d.id, d.title);
+                manager.mark_active(d.id);
+                launch_download(&d);
+                resumed += 1;
+            }
+        }
+    }
+    if resumed > 0 {
+        info!("Resumed {resumed} in-flight download(s)");
     }
 }
 
