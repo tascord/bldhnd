@@ -28,7 +28,7 @@ pub fn client() -> Arc<MusicBrainz> { CLIENT.clone() }
 #[derive(Debug)]
 pub struct MusicBrainz {
     latest: Arc<RwLock<[char; 16]>>,
-    db: Database,
+    db: Arc<Database>,
     total: AtomicUsize,
 }
 
@@ -108,6 +108,10 @@ impl MusicBrainz {
         txn.commit().unwrap();
 
         let total = load_mb_cursor(&db).map(|(_, lines)| lines).unwrap_or(0);
+        let db = Arc::new(db);
+
+        // Heal older databases that never indexed artist names.
+        backfill_artist_index(db.clone());
 
         Self { latest: Arc::new(RwLock::new(['\0'; 16])), db, total: AtomicUsize::new(total) }
     }
@@ -222,11 +226,7 @@ impl MusicBrainz {
                             Ok(it) => {
                                 t_data.insert(it.id.clone(), serde_json::to_string(&it).unwrap())?;
 
-                                t_idx.insert(it.title.clone(), {
-                                    let mut v = t_idx.get(it.title).ok().flatten().map(|v| v.value()).unwrap_or_default();
-                                    v.push(it.id);
-                                    v
-                                })?;
+                                index_release(&mut t_idx, &it);
 
                                 processed += 1;
                                 batch_count += 1;
@@ -262,8 +262,120 @@ impl MusicBrainz {
     }
 }
 
-fn load_mb_cursor(db: &Database) -> Option<(String, usize)> {
-    let tx = db.begin_read().ok()?;
+/// Add a release to the search index under every key a user might search by:
+/// the release title AND its primary artist. Artist names are the most common
+/// kind of query — "remi wolf" must find releases titled "Junuro".
+pub(crate) fn index_release(
+    t_idx: &mut redb::Table<'_, String, Vec<String>>,
+    release: &MinifiedRelease,
+) {
+    let mut keys: Vec<&str> = vec![release.title.as_str()];
+    if !release.primary_artist.is_empty() {
+        keys.push(release.primary_artist.as_str());
+    }
+    for key in keys {
+        let mut ids = {
+            let Ok(entry) = t_idx.get(key.to_string()) else { continue };
+            match entry {
+                Some(v) => v.value(),
+                None => Vec::new(),
+            }
+        };
+        if ids.iter().any(|id| id == &release.id) {
+            continue;
+        }
+        ids.push(release.id.clone());
+        let _ = t_idx.insert(key.to_string(), ids);
+    }
+}
+
+const BACKFILL_CURSOR: &str = "artist_index_backfill";
+
+/// Backfill artist-name index entries for releases ingested before artists
+/// were indexed. Idempotent, cursor-persisted across restarts, runs on a
+/// background thread so startup stays fast.
+fn backfill_artist_index(db: Arc<Database>) {
+    std::thread::Builder::new()
+        .name("artist-backfill".into())
+        .spawn(move || {
+            let started = Instant::now();
+            const BATCH: usize = 5_000;
+
+            let mut last_key: Option<String> = (|| {
+                let tx = db.begin_read().ok()?;
+                let table = tx.open_table(MusicBrainz::checkpoint_table_def()).ok()?;
+                let v = table.get(BACKFILL_CURSOR.to_string()).ok()??;
+                Some(v.value().to_string())
+            })();
+
+            info!(from = ?last_key, "artist index backfill starting");
+            let mut total = 0usize;
+
+            loop {
+                let Ok(tx) = db.begin_read() else { return };
+                let Ok(t_data) = tx.open_table(MusicBrainz::releases_table_def()) else { return };
+
+                let mut batch: Vec<(String, String)> = Vec::with_capacity(BATCH);
+                let range = match &last_key {
+                    Some(k) => t_data.range(k.clone()..),
+                    None => t_data.range::<String>(..),
+                };
+                let Ok(iter) = range else { return };
+                for row in iter.flatten() {
+                    let (k, v) = row;
+                    let key = k.value();
+                    if Some(&key) == last_key.as_ref() {
+                        continue; // resume point already processed
+                    }
+                    batch.push((key, v.value().to_string()));
+                    if batch.len() >= BATCH {
+                        break;
+                    }
+                }
+                drop(t_data);
+
+                if batch.is_empty() {
+                    info!(total, elapsed_s = started.elapsed().as_secs(), "artist index backfill complete");
+                    return;
+                }
+
+                let new_last = batch.last().map(|(k, _)| k.clone()).unwrap_or_default();
+
+                let Ok(wtx) = db.begin_write() else { return };
+                let Ok(mut t_idx) = wtx.open_table(MusicBrainz::indexes_table_def()) else { return };
+                for (_, json) in &batch {
+                    if let Ok(min) = serde_json::from_str::<MinifiedRelease>(json) {
+                        index_release(&mut t_idx, &min);
+                        total += 1;
+                    }
+                }
+                drop(t_idx);
+                if wtx.commit().is_err() {
+                    error!("artist backfill commit failed");
+                    return;
+                }
+
+                last_key = Some(new_last.clone());
+                if let Ok(wtx) = db.begin_write() {
+                    let res = (|| -> anyhow::Result<()> {
+                        let mut t_cp = wtx.open_table(MusicBrainz::checkpoint_table_def())?;
+                        t_cp.insert(BACKFILL_CURSOR.to_string(), new_last)?;
+                        drop(t_cp);
+                        wtx.commit()?;
+                        Ok(())
+                    })();
+                    if let Err(e) = res {
+                        warn!(error = %e, "backfill cursor save failed");
+                    }
+                }
+
+                debug!(total, "artist backfill progress");
+            }
+        })
+        .expect("spawn artist-backfill thread");
+}
+
+fn load_mb_cursor(db: &Database) -> Option<(String, usize)> {    let tx = db.begin_read().ok()?;
     let table = tx.open_table(MusicBrainz::checkpoint_table_def()).ok()?;
     let entry = table.get("cursor".to_string()).ok()??;
     let s = entry.value();
@@ -280,4 +392,56 @@ fn save_mb_cursor(db: &Database, tag: &str, lines: usize) {
     table.insert("cursor".to_string(), payload).unwrap();
     drop(table);
     tx.commit().unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn minified(id: &str, title: &str, artist: &str) -> MinifiedRelease {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "title": title,
+            "releaseDate": null,
+            "country": null,
+            "barcode": null,
+            "asin": null,
+            "primaryArtist": artist,
+            "artistCredits": [],
+            "genres": [],
+            "tags": [],
+            "totalDiscs": 1,
+            "totalTracks": 1,
+            "tracks": [],
+            "hasFrontCover": false,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn index_release_indexes_title_and_artist() {
+        let db = Database::create(std::env::temp_dir().join("mb-test-idx.db")).unwrap();
+        let tx = db.begin_write().unwrap();
+        let mut t_idx = tx.open_table(MusicBrainz::indexes_table_def()).unwrap();
+
+        index_release(&mut t_idx, &minified("id1", "Junuro", "Remi Wolf"));
+        index_release(&mut t_idx, &minified("id2", "I'm Allergic to Dogs!", "Remi Wolf"));
+        // Duplicate (same id under same key) must not duplicate entries.
+        index_release(&mut t_idx, &minified("id2", "I'm Allergic to Dogs!", "Remi Wolf"));
+
+        let wolf = {
+            let v = t_idx.get("Remi Wolf".to_string()).unwrap().unwrap();
+            v.value()
+        };
+        assert_eq!(wolf, vec!["id1".to_string(), "id2".to_string()]);
+        let junuro = {
+            let v = t_idx.get("Junuro".to_string()).unwrap().unwrap();
+            v.value()
+        };
+        assert_eq!(junuro, vec!["id1".to_string()]);
+
+        drop(t_idx);
+        tx.commit().unwrap();
+        let _ = std::fs::remove_file(std::env::temp_dir().join("mb-test-idx.db"));
+    }
 }
