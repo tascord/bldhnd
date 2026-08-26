@@ -424,7 +424,17 @@ pub fn handle_request(req: Request, tx: Sender<Response>) {    match req {
         }
         Request::CancelDownload { id } => {
             LIVE_PROGRESS.lock().unwrap().remove(&id);
+            // Stop actual torrent transfer, not just the DB row.
             let manager = DownloadManager::new();
+            if let Ok(Some(d)) = manager.get_download(id) {
+                if d.backend == "torrent" {
+                    let key = download::torrent::torrent_key(
+                        d.uri.as_deref().unwrap_or(""),
+                        d.info_hash.as_deref(),
+                    );
+                    download::torrent::cancel_torrent(&key);
+                }
+            }
             if let Err(e) = manager.update_state(id, crate::download::DownloadState::Cancelled) {
                 let _ = tx.send(Response::Error { message: e.to_string() });
             } else {
