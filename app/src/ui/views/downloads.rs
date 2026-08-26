@@ -12,6 +12,8 @@ pub struct DownloadsPanel {
     /// after async refreshes complete.
     app: Mutable<Option<EventTarget<AppEvent>>>,
     pub items: Mutable<Vec<crate::ipsea::DownloadInfo>>,
+    /// Byte-level progress for in-flight downloads, keyed by id.
+    progress: Mutable<std::collections::HashMap<u64, crate::ipsea::ProgressInfo>>,
     selection: Mutable<usize>,
     status: Mutable<String>,
 }
@@ -21,6 +23,7 @@ impl DownloadsPanel {
         Self {
             app: Mutable::new(None),
             items: Mutable::new(Vec::new()),
+            progress: Mutable::new(std::collections::HashMap::new()),
             selection: Mutable::new(0),
             status: Mutable::new(String::new()),
         }
@@ -33,6 +36,43 @@ impl DownloadsPanel {
         if let Some(target) = &*self.app.lock_ref() {
             target.emit(AppEvent::RequestAnimationFrame);
         }
+    }
+
+    /// Ids of downloads that can still move (worth polling).
+    fn active_ids(&self) -> Vec<u64> {
+        self.items
+            .lock_ref()
+            .iter()
+            .filter(|d| matches!(d.state.as_str(), "queued" | "connecting" | "downloading"))
+            .map(|d| d.id)
+            .collect()
+    }
+
+    /// Poll live byte progress for all in-flight items. Called ~1/s while the
+    /// tab is visible.
+    pub fn poll_progress(&self) {
+        let ids = self.active_ids();
+        if ids.is_empty() {
+            return;
+        }
+        let panel = self.clone();
+        tokio::spawn(async move {
+            let mut updates = Vec::new();
+            for id in ids {
+                if let Ok(Ok(p)) =
+                    tokio::task::spawn_blocking(move || crate::ipsea::Client::connect().download_progress(id)).await
+                {
+                    updates.push((id, p));
+                }
+            }
+            if !updates.is_empty() {
+                let mut map = panel.progress.lock_mut();
+                for (id, p) in updates {
+                    map.insert(id, p);
+                }
+                panel.frame();
+            }
+        });
     }
 
     /// Fetch the current queue from the service.
@@ -131,10 +171,12 @@ impl DownloadsPanel {
         }
 
         let sel = self.selection.get();
+        let progress = self.progress.lock_ref().clone();
         let rows = (area.height as usize).saturating_sub(3);
 
         for (i, d) in items.iter().take(rows).enumerate() {
             let y = area.y + 2 + i as u16;
+            let live = progress.get(&d.id);
             let style = if i == sel { accent } else { fg };
             if i == sel && !matches!(d.state.as_str(), "complete" | "failed" | "cancelled") {
                 sel_marker(theme).render("▸").blit(buf, area.x, y);
@@ -156,12 +198,26 @@ impl DownloadsPanel {
             };
             glyph_style.render(glyph).blit(buf, area.x + 2, y);
 
-            style.render(&trunc(&d.title, 46)).blit(buf, area.x + 5, y);
-            muted.render(&format!("{:<9}", d.backend)).blit(buf, area.x + 52, y);
+            style.render(&trunc(&d.title, 40)).blit(buf, area.x + 5, y);
+            muted.render(&format!("{:<9}", d.backend)).blit(buf, area.x + 46, y);
 
-            let size = fmt_size(d.size);
-            muted.render(&format!("{:>7}", size)).blit(buf, area.x + 62, y);
-            muted.render(&format!("{:<11}", d.state)).blit(buf, area.x + 70, y);
+            match live.filter(|p| p.total_bytes > 0) {
+                Some(p) => {
+                    // In-flight: percent bar in the size column, speed in the
+                    // state column.
+                    let pct = (p.bytes_done.min(p.total_bytes) as f64 / p.total_bytes as f64 * 100.0) as u16;
+                    let bar_w = 10;
+                    let filled = (bar_w * pct as usize / 100).min(bar_w);
+                    let bar = format!("[{}{}] {:>3}%", "█".repeat(filled), " ".repeat(bar_w - filled), pct);
+                    warn.render(&bar).blit(buf, area.x + 56, y);
+                    muted.render(&format!("{:>9}/s", fmt_size(p.speed_bps))).blit(buf, area.x + 72, y);
+                }
+                None => {
+                    let size = fmt_size(d.size);
+                    muted.render(&format!("{:>7}", size)).blit(buf, area.x + 58, y);
+                    muted.render(&format!("{:<11}", d.state)).blit(buf, area.x + 68, y);
+                }
+            }
         }
 
         if items.len() > rows {

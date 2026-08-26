@@ -8,10 +8,26 @@ use {
     },
     download::{DownloadBackend, DownloadItem as LibDownloadItem, SearchBackend},
     serde::{Deserialize, Serialize},
-    std::{sync::mpsc::Sender, time::Duration},
+    std::{collections::HashMap, sync::mpsc::Sender, time::Duration},
     tokio::time::sleep,
-    tracing::{info, warn},
+    tracing::{error, info, warn},
 };
+
+/// Byte-level progress of in-flight downloads, updated by backend callbacks.
+/// Keyed by download id; entries are removed on completion/cancel.
+static LIVE_PROGRESS: std::sync::LazyLock<std::sync::Mutex<HashMap<u64, download::DownloadProgress>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
+fn report_progress(id: u64, p: download::DownloadProgress) {
+    let mut live = LIVE_PROGRESS.lock().unwrap();
+    if p.state == download::DownloadState::Complete || p.state == download::DownloadState::Failed {
+        // Terminal state: drop the entry so the DB row (authoritative)
+        // takes over for future pollers.
+        live.remove(&id);
+        return;
+    }
+    live.insert(id, p);
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "method")]
@@ -280,99 +296,32 @@ pub fn handle_request(req: Request, tx: Sender<Response>) {    match req {
             let manager = DownloadManager::new();
             match manager.create_download(item) {
                 Ok(id) => {
-                    let rt = tokio::runtime::Handle::current();
                     let download_dir = crate::download::download_dir();
 
-                    rt.spawn(async move {
-                        let boxed: Box<str> = backend.clone().into_boxed_str();
-                        let backend_str: &'static str = Box::leak(boxed);
-                        let title_for_notif = title.clone();
-                        let lib_item = LibDownloadItem {
-                            backend: backend_str,
+                    // ipsea handlers run without a tokio reactor —
+                    // Handle::current() would panic here and silently kill the
+                    // download before it starts. Drive the async work on a
+                    // dedicated thread with its own runtime instead.
+                    std::thread::spawn(move || {
+                        let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                            Ok(rt) => rt,
+                            Err(e) => {
+                                warn!("download runtime failed: {e}");
+                                let _ = DownloadManager::new().update_state(id, crate::download::DownloadState::Failed);
+                                return;
+                            }
+                        };
+                        rt.block_on(download_job(
+                            id,
+                            backend,
                             title,
                             filename,
+                            url,
                             size,
                             info_hash,
-                            nzb_data: None,
-                            uri: if url.is_empty() { None } else { Some(url) },
-                            username: None,
-                        };
-
-                        let config = crate::config::Config::load();
-                        let backend_config = backend_config_from(&config);
-
-                        let result = match backend_str {
-                            "soulseek" => {
-                                if let Some(downloader) = download::slsk::SlskDownloader::with_config(&backend_config) {
-                                    downloader.download(&lib_item, &download_dir, None).await
-                                } else {
-                                    Err(anyhow::anyhow!("Soulseek credentials not configured"))
-                                }
-                            }
-                            "torrent" => {
-                                if let Some(downloader) = download::torrent::TorrentDownloader::with_config(&backend_config)
-                                {
-                                    downloader.download(&lib_item, &download_dir, None).await
-                                } else {
-                                    Err(anyhow::anyhow!("No torrent URI — search results missing a magnet link"))
-                                }
-                            }
-                            "usenet" => {
-                                if let Some(downloader) = download::usenet::UsenetDownloader::with_config(&backend_config) {
-                                    downloader.download(&lib_item, &download_dir, None).await
-                                } else {
-                                    Err(anyhow::anyhow!("SABnzbd URL not configured"))
-                                }
-                            }
-                            _ => Err(anyhow::anyhow!("Unknown backend: {}", backend_str)),
-                        };
-
-                        match result {
-                            Ok(path) => {
-                                let mgr = DownloadManager::new();
-                                info!("Download completed: {} -> {:?}", id, path);
-                                let path_for_notif = path.clone();
-                                let _ = mgr.update_path(id, path);
-                                mgr.mark_complete(id);
-
-                                let cfg = Config::load();
-                                if cfg.notifications.enabled && cfg.notifications.system_notifications {
-                                    let notif = Notification {
-                                        title: format!("Download complete: {}", title_for_notif),
-                                        body: format!("Saved to {:?}", path_for_notif),
-                                        icon: None,
-                                        data: None,
-                                    };
-                                    let notifier = SystemNotifier;
-                                    let _ = notifier.send(&notif).await;
-                                }
-
-                                if let Some(ref plex_cfg) = cfg.plex {
-                                    if plex_cfg.auto_scan {
-                                        let client = PlexClient::new(&plex_cfg.url, plex_cfg.token.clone());
-                                        let _ = client.process_download(&path_for_notif, &media_type_str).await;
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                let mgr = DownloadManager::new();
-                                let _ = mgr.update_state(id, crate::download::DownloadState::Failed);
-                                mgr.mark_complete(id);
-                                warn!("Download failed: {} - {}", id, e);
-
-                                let cfg = Config::load();
-                                if cfg.notifications.enabled && cfg.notifications.system_notifications {
-                                    let notif = Notification {
-                                        title: format!("Download failed: {}", title_for_notif),
-                                        body: e.to_string(),
-                                        icon: None,
-                                        data: None,
-                                    };
-                                    let notifier = SystemNotifier;
-                                    let _ = notifier.send(&notif).await;
-                                }
-                            }
-                        }
+                            media_type_str,
+                            download_dir,
+                        ));
                     });
 
                     let _ = tx.send(Response::StartDownload { id });
@@ -383,10 +332,10 @@ pub fn handle_request(req: Request, tx: Sender<Response>) {    match req {
             }
         }
         Request::DownloadProgress { id } => {
-            let manager = DownloadManager::new();
-            let progress = if manager.is_active(id) {
-                Progress { bytes_done: 0, total_bytes: 0, state: crate::download::DownloadState::Downloading, speed_bps: 0 }
-            } else {
+            // Live byte-level progress from backend callbacks wins over the
+            // DB row (which only carries coarse state).
+            let progress = LIVE_PROGRESS.lock().unwrap().get(&id).cloned().map(Into::into).unwrap_or_else(|| {
+                let manager = DownloadManager::new();
                 match manager.get_download(id) {
                     Ok(Some(d)) => {
                         let state = if d.state == crate::download::DownloadState::Complete {
@@ -403,16 +352,118 @@ pub fn handle_request(req: Request, tx: Sender<Response>) {    match req {
                         speed_bps: 0,
                     },
                 }
-            };
+            });
             let _ = tx.send(Response::DownloadProgress { progress });
         }
         Request::CancelDownload { id } => {
+            LIVE_PROGRESS.lock().unwrap().remove(&id);
             let manager = DownloadManager::new();
             if let Err(e) = manager.update_state(id, crate::download::DownloadState::Cancelled) {
                 let _ = tx.send(Response::Error { message: e.to_string() });
             } else {
                 manager.mark_complete(id);
                 let _ = tx.send(Response::CancelDownload);
+            }
+        }
+    }
+}
+
+/// Execute one queued download end-to-end: pick the backend, run with live
+/// progress reporting, then persist outcome and fire notifications.
+#[allow(clippy::too_many_arguments)]
+async fn download_job(
+    id: u64,
+    backend: String,
+    title: String,
+    filename: String,
+    url: String,
+    size: u64,
+    info_hash: Option<String>,
+    media_type_str: String,
+    download_dir: std::path::PathBuf,
+) {
+    let boxed: Box<str> = backend.into_boxed_str();
+    let backend_str: &'static str = Box::leak(boxed);
+    let title_for_notif = title.clone();
+    let lib_item = LibDownloadItem {
+        backend: backend_str,
+        title,
+        filename,
+        size,
+        info_hash,
+        nzb_data: None,
+        uri: if url.is_empty() { None } else { Some(url) },
+        username: None,
+    };
+
+    let config = crate::config::Config::load();
+    let backend_config = backend_config_from(&config);
+
+    // Backend callbacks stream live byte progress into the registry for
+    // DownloadProgress pollers.
+    let progress_cb: std::sync::Arc<dyn Fn(download::DownloadProgress) + Send + Sync> =
+        std::sync::Arc::new(move |p| report_progress(id, p));
+
+    let result = match backend_str {
+        "soulseek" => match download::slsk::SlskDownloader::with_config(&backend_config) {
+            Some(downloader) => downloader.download(&lib_item, &download_dir, Some(progress_cb)).await,
+            None => Err(anyhow::anyhow!("Soulseek credentials not configured")),
+        },
+        "torrent" => {
+            download::torrent::TorrentDownloader::default()
+                .download(&lib_item, &download_dir, Some(progress_cb))
+                .await
+        }
+        "usenet" => match download::usenet::UsenetDownloader::with_config(&backend_config) {
+            Some(downloader) => downloader.download(&lib_item, &download_dir, Some(progress_cb)).await,
+            None => Err(anyhow::anyhow!("SABnzbd URL not configured")),
+        },
+        _ => Err(anyhow::anyhow!("Unknown backend: {}", backend_str)),
+    };
+
+    match result {
+        Ok(path) => {
+            let mgr = DownloadManager::new();
+            info!("Download completed: {} -> {:?}", id, path);
+            let path_for_notif = path.clone();
+            if let Err(e) = mgr.update_path(id, path) { error!("update_path failed: {e:#}"); }
+            mgr.mark_complete(id);
+
+            let cfg = Config::load();
+            if cfg.notifications.enabled && cfg.notifications.system_notifications {
+                let notif = Notification {
+                    title: format!("Download complete: {}", title_for_notif),
+                    body: format!("Saved to {:?}", path_for_notif),
+                    icon: None,
+                    data: None,
+                };
+                let notifier = SystemNotifier;
+                let _ = notifier.send(&notif).await;
+            }
+
+            if let Some(ref plex_cfg) = cfg.plex {
+                if plex_cfg.auto_scan {
+                    let client = PlexClient::new(&plex_cfg.url, plex_cfg.token.clone());
+                    let _ = client.process_download(&path_for_notif, &media_type_str).await;
+                }
+            }
+        }
+        Err(e) => {
+            let mgr = DownloadManager::new();
+            if let Err(e) = mgr.update_state(id, crate::download::DownloadState::Failed) { error!("update_state failed: {e:#}"); }
+            mgr.mark_complete(id);
+            warn!("Download failed: {} - {}", id, e);
+
+            let cfg = Config::load();
+            if cfg.notifications.enabled && cfg.notifications.system_notifications {
+                let notif = Notification {
+                    title: format!("Download failed: {}", title_for_notif),
+                    body: e.to_string(),
+                    icon: None,
+                    data: None,
+                };
+                let notifier = SystemNotifier;
+                let _ = notifier.send(&notif).await;
             }
         }
     }

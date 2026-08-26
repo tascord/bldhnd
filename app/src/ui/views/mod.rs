@@ -744,6 +744,18 @@ impl View for BldhndView {
         // Downloads tab redraws after async refreshes.
         self.downloads.wire(app.clone());
 
+        // Poll live download progress ~1/s while the Downloads tab is visible.
+        let dl_panel = self.downloads.clone();
+        let dl_tab = self.active_tab.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                if dl_tab.get() == 5 {
+                    dl_panel.poll_progress();
+                }
+            }
+        });
+
         // Probe service connectivity for the Home tab.
         probe_service(self.home.service_status.clone(), app.clone());
 

@@ -86,11 +86,14 @@ pub struct DownloadInfo {
     pub created_at: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProgressInfo {
     pub bytes_done: u64,
     pub total_bytes: u64,
+    #[serde(default)]
     pub state: String,
+    #[serde(default)]
+    pub speed_bps: u64,
 }
 
 pub struct Client {
@@ -207,6 +210,14 @@ impl Client {
     pub fn get_download(&self, id: u64) -> anyhow::Result<Option<DownloadInfo>> {
         match self.send_request(Request::GetDownload { id })? {
             Response::GetDownload { download } => Ok(download),
+            Response::Error { message } => Err(anyhow::anyhow!("Error: {}", message)),
+            _ => Err(anyhow::anyhow!("Unexpected response type")),
+        }
+    }
+
+    pub fn download_progress(&self, id: u64) -> anyhow::Result<ProgressInfo> {
+        match self.send_request(Request::DownloadProgress { id })? {
+            Response::DownloadProgress { progress } => Ok(progress),
             Response::Error { message } => Err(anyhow::anyhow!("Error: {}", message)),
             _ => Err(anyhow::anyhow!("Unexpected response type")),
         }

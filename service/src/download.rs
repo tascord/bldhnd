@@ -267,19 +267,13 @@ impl DownloadManager {
         let db = &*DOWNLOAD_DB;
         let mut tx = db.begin_write()?;
         {
-            let table = tx.open_table(DOWNLOADS_TABLE)?;
-            let json = {
-                if let Ok(Some(value)) = table.get(id) {
-                    let mut download: Download = serde_json::from_str(value.value())?;
-                    download.state = state;
-                    Some(serde_json::to_string(&download)?)
-                } else {
-                    None
-                }
-            };
-            if let Some(json) = json {
-                let mut table = tx.open_table(DOWNLOADS_TABLE)?;
-                table.insert(id, json.as_str())?;
+            // One table binding per transaction — redb rejects reopening.
+            let mut table = tx.open_table(DOWNLOADS_TABLE)?;
+            let current = table.get(id)?.map(|v| v.value().to_string());
+            if let Some(s) = current {
+                let mut download: Download = serde_json::from_str(&s)?;
+                download.state = state;
+                table.insert(id, serde_json::to_string(&download)?.as_str())?;
             }
         }
         tx.commit()?;
@@ -290,20 +284,14 @@ impl DownloadManager {
         let db = &*DOWNLOAD_DB;
         let mut tx = db.begin_write()?;
         {
-            let table = tx.open_table(DOWNLOADS_TABLE)?;
-            let json = {
-                if let Ok(Some(value)) = table.get(id) {
-                    let mut download: Download = serde_json::from_str(value.value())?;
-                    download.download_path = Some(path);
-                    download.state = DownloadState::Complete;
-                    Some(serde_json::to_string(&download)?)
-                } else {
-                    None
-                }
-            };
-            if let Some(json) = json {
-                let mut table = tx.open_table(DOWNLOADS_TABLE)?;
-                table.insert(id, json.as_str())?;
+            // One table binding per transaction — redb rejects reopening.
+            let mut table = tx.open_table(DOWNLOADS_TABLE)?;
+            let current = table.get(id)?.map(|v| v.value().to_string());
+            if let Some(s) = current {
+                let mut download: Download = serde_json::from_str(&s)?;
+                download.download_path = Some(path);
+                download.state = DownloadState::Complete;
+                table.insert(id, serde_json::to_string(&download)?.as_str())?;
             }
         }
         tx.commit()?;

@@ -6,6 +6,7 @@ use {
     std::{
         path::{Path, PathBuf},
         sync::Arc,
+        time::Duration,
     },
 };
 
@@ -151,7 +152,31 @@ impl DownloadBackend for TorrentDownloader {
         let handle =
             response.into_handle().ok_or_else(|| anyhow::anyhow!("torrent already active"))?;
 
+        // Stream byte-level progress out via the callback while downloading.
+        let tick_handle = handle.clone();
+        let ticker = progress_callback.as_ref().map(|cb| {
+            let cb = Arc::clone(cb);
+            tokio::spawn(async move {
+                loop {
+                    let s = tick_handle.stats();
+                    cb(DownloadProgress {
+                        bytes_done: s.progress_bytes,
+                        total_bytes: s.total_bytes,
+                        state: if s.finished { DownloadState::Complete } else { DownloadState::Downloading },
+                        speed_bps: (s.live.map(|l| l.download_speed.mbps).unwrap_or(0.0) * 1_000_000.0) as u64,
+                    });
+                    if s.finished || s.error.is_some() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            })
+        });
+
         handle.wait_until_completed().await.map_err(|e| anyhow::anyhow!("torrent failed: {e}"))?;
+        if let Some(t) = &ticker {
+            t.abort();
+        }
 
         // Best-effort real content name for the completed path.
         let name = handle.name().unwrap_or_else(|| item.filename.clone());

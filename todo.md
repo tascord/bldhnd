@@ -5,7 +5,7 @@ replacement that's genuinely nice to live in. Ordered by impact; check things of
 
 ## Phase 1 — Core reliability (must not embarrass us)
 
-- [ ] **Download progress in the UI.** `Request::DownloadProgress` IPC exists but is never polled. Poll active downloads every ~1s while the Downloads tab is visible; show %, transferred/total, and speed. Without this, queued downloads look frozen even when working.
+- [x] **Download progress in the UI.** `Request::DownloadProgress` IPC exists but is never polled. Poll active downloads every ~1s while the Downloads tab is visible; show %, transferred/total, and speed. Without this, queued downloads look frozen even when working. *(Done: librqbit byte-ticker → live registry → IPC poll → progress bar + speed in the Downloads tab; also fixed StartDownload panicking without a reactor and redb double-open table bugs that silently broke completion persistence.)*
 - [ ] **Auto-refresh Downloads tab** on an interval (or on state-change notifications) instead of manual `r`.
 - [ ] **Resume queue on service restart.** Downloads persisted in redb with state `queued` are never picked back up at boot. On startup, re-drive all non-terminal downloads through their backend.
 - [ ] **Retry failed downloads.** `r`-style retry key on a failed row (re-resolve uri → backend again). Failures today are dead ends.
